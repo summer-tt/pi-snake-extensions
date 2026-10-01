@@ -2,6 +2,21 @@
 
 All notable changes to pi-magpie.
 
+## 0.1.1
+
+- `/magpie` on its own is the overview: endpoint and whether it is local, the
+  catalog's model and routing-group counts, and the current model's own
+  reading, with the command list under it. It no longer prints only the current
+  model.
+- Tab completes the whole surface: the subcommands (with what each reports)
+  while the first word is typed, then the ids the subcommand takes — every
+  model for `quota`, every routing group for `group` — ranked by a fuzzy match
+  that puts a prefix or a contiguous hit first.
+- New `/magpie help`, and an unknown subcommand now answers with the command
+  list instead of a bare usage line.
+- The subcommand table is one source for the completions, the overview and
+  `help`, so the three cannot drift apart (`usage.ts`, 15 unit tests).
+
 ## 0.1.0
 
 - Initial release: magpie's gateway as the pi provider `magpie`.

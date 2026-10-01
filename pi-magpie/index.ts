@@ -4,12 +4,16 @@
  *
  *   /login magpie        endpoint (default http://127.0.0.1:3425) and API key
  *                        (default magpie, which a loopback gateway accepts)
- *   /magpie              the current model: endpoint, API, quota or routing
+ *   /magpie              where the gateway is, what it serves, and the current
+ *                        model's quota or routing group
  *   /magpie quota [id]   what the model's provider has left
  *   /magpie group [id]   a routing group's members, rules and last decision
  *   /magpie groups       every routing group magpie offers
  *   /magpie refresh      fetch magpie's catalog again now
  *   /magpie endpoint     the gateway in use, and whether models.json also names it
+ *
+ * Every one of those completes on Tab: the subcommands while the first word is
+ * typed, then the ids the subcommand takes.
  */
 
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -41,6 +45,7 @@ import {
 	type Route,
 } from "./routing.ts";
 import { createMagpieProvider, type MagpieProviderHandle, ownedByEntry } from "./provider.ts";
+import { argumentCompletions, findSubcommand, usageLines } from "./usage.ts";
 
 const PROVIDER_LABEL = "magpie";
 
@@ -94,13 +99,15 @@ export default function (pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("magpie", {
-		description: "Magpie gateway: the current model, its quota, its routing group",
+		description: "Magpie gateway — the models, quotas and routing groups it serves",
+		getArgumentCompletions: (prefix) => argumentCompletions(prefix, { models: () => magpie.models() }),
 		handler: async (args, ctx) => {
 			const [sub, ...rest] = args.trim().split(/\s+/).filter(Boolean);
 			const target = rest[0];
 			const now = Date.now();
 			const lines = await report(ctx, magpie, sub, target, now);
-			ctx.ui.notify(lines.join("\n"), "info");
+			const unknown = sub !== undefined && !findSubcommand(sub);
+			ctx.ui.notify(lines.join("\n"), unknown ? "warning" : "info");
 			if (sub === "refresh") await refreshStatus(ctx, true);
 		},
 	});
@@ -154,43 +161,72 @@ async function report(
 			return refreshReport(ctx);
 		case "endpoint":
 			return endpointReport(ctx);
+		case "help":
+			return helpReport();
 		case undefined:
-			return currentReport(ctx, magpie, now);
+			return overviewReport(ctx, magpie, now);
 		default:
-			return [
-				`unknown: /magpie ${sub}`,
-				"usage: /magpie [quota [model] | group [id] | groups | refresh | endpoint]",
-			];
+			return [`unknown: /magpie ${sub}`, "what it can report on:", ...usageLines()];
 	}
 }
 
-async function currentReport(
+/**
+ * `/magpie` on its own: where the gateway is, what it serves, and the current
+ * model's own reading — the whole picture, with the command list under it,
+ * rather than one line of help or one model's quota.
+ */
+async function overviewReport(
 	ctx: ExtensionContext,
 	magpie: MagpieProviderHandle,
 	now: number,
 ): Promise<string[]> {
-	const model = ctx.model;
-	if (!model || model.provider !== PROVIDER_ID) {
-		return [
-			`the current model is not a magpie one (${model ? `${model.provider}/${model.id}` : "no model"})`,
-			magpieModels(ctx).length > 0
-				? "pick one from /model"
-				: "magpie has no models yet — run /login magpie",
-		];
-	}
 	const auth = await gatewayAuth(ctx);
-	if (!auth) return ["magpie is not configured — run /login magpie"];
-	const lines = [`${PROVIDER_LABEL} · ${model.name} (${model.id})`];
-	lines.push(`endpoint: ${gatewayUrlFor(auth.root)}${auth.local ? "" : " (remote)"}`);
-	lines.push(`api: ${model.api}`);
-	if (model.id.startsWith(GROUP_PREFIX)) {
-		lines.push(...(await groupReport(ctx, model.id.slice(GROUP_PREFIX.length))));
-		return lines;
+	const models = magpieModels(ctx);
+	const groups = models.filter((model) => model.id.startsWith(GROUP_PREFIX)).length;
+	const lines = [
+		auth
+			? `${PROVIDER_LABEL} · ${gatewayUrlFor(auth.root)} · ${auth.local ? "this machine" : "remote"} · logged in`
+			: `${PROVIDER_LABEL} · logged out — /login magpie asks for the endpoint and the key`,
+		`catalog: ${count(models.length, "model")}${groups > 0 ? ` · ${count(groups, "routing group")}` : ""}`,
+	];
+	const model = ctx.model;
+	if (auth && model?.provider === PROVIDER_ID) {
+		lines.push(`current: ${model.name} (${model.id}) · ${model.api}`);
+		lines.push(...(await currentLines(ctx, magpie, auth, now)).map((line) => `  ${line}`));
+	} else if (auth) {
+		lines.push(
+			`current: ${model ? `${model.provider}/${model.id}` : "no model"} — not a magpie one${models.length > 0 ? " (/model lists them)" : ""}`,
+		);
 	}
-	lines.push(
-		...(await quotaLines(magpie, auth, model.id, now, auth.token)).map((line) => `quota: ${line}`),
-	);
+	lines.push("", ...usageLines());
 	return lines;
+}
+
+/** The current model's own reading: its routing group, or its quota. */
+async function currentLines(
+	ctx: ExtensionContext,
+	magpie: MagpieProviderHandle,
+	auth: GatewayAuth,
+	now: number,
+): Promise<string[]> {
+	const model = ctx.model;
+	if (!model || model.provider !== PROVIDER_ID) return [];
+	if (model.id.startsWith(GROUP_PREFIX)) {
+		return groupReport(ctx, model.id.slice(GROUP_PREFIX.length));
+	}
+	return (await quotaLines(magpie, auth, model.id, now, auth.token)).map((line) => `quota: ${line}`);
+}
+
+function helpReport(): string[] {
+	return [`${PROVIDER_LABEL} — the gateway's models, quotas and routing groups`, ...usageLines()];
+}
+
+function notConfigured(): string {
+	return `${PROVIDER_LABEL} is not configured — /login magpie asks for the endpoint and the key`;
+}
+
+function count(amount: number, noun: string): string {
+	return `${amount} ${noun}${amount === 1 ? "" : "s"}`;
 }
 
 async function quotaReport(
@@ -200,7 +236,7 @@ async function quotaReport(
 	now: number,
 ): Promise<string[]> {
 	const auth = await gatewayAuth(ctx);
-	if (!auth) return ["magpie is not configured — run /login magpie"];
+	if (!auth) return [notConfigured()];
 	const model = target
 		? magpieModels(ctx).find((entry) => entry.id === target || entry.name === target)
 		: ctx.model?.provider === PROVIDER_ID
@@ -312,12 +348,12 @@ async function groupsReport(ctx: ExtensionContext, magpie: MagpieProviderHandle)
 
 async function refreshReport(ctx: ExtensionContext): Promise<string[]> {
 	const auth = await gatewayAuth(ctx);
-	if (!auth) return ["magpie is not configured — run /login magpie"];
+	if (!auth) return [notConfigured()];
 	const result = await ctx.modelRegistry.refresh({ providers: [PROVIDER_ID], force: true });
 	const error = result.errors.get(PROVIDER_ID);
 	if (error) return [`could not refresh magpie's catalog: ${error.message}`];
 	const models = magpieModels(ctx);
-	return [`magpie's catalog: ${models.length} model${models.length === 1 ? "" : "s"}`];
+	return [`magpie's catalog: ${count(models.length, "model")}`];
 }
 
 async function endpointReport(ctx: ExtensionContext): Promise<string[]> {

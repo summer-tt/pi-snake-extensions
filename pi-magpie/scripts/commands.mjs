@@ -48,8 +48,18 @@ const ctx = {
 };
 
 console.log(`registered provider: ${registered.join(", ")}\ncurrent model:       ${model?.id ?? "none"}\n`);
-for (const args of ["", "quota", `quota ${wanted}`, `group`, "groups", "endpoint", "refresh", "bogus"]) {
+for (const args of ["", "quota", `quota ${wanted}`, `group`, "groups", "endpoint", "refresh", "help", "bogus"]) {
 	console.log(`── /magpie ${args}`.trimEnd());
 	await handler(args, ctx);
 	console.log();
+}
+
+const { argumentCompletions } = await import("../usage.ts");
+const completions = { models: () => models };
+console.log("── Tab completion");
+for (const prefix of ["", "g", "gr", "quota ", "quota mimo", "group ", "groups ", "refresh ", "nope"]) {
+	const items = argumentCompletions(prefix, completions);
+	const shown = items?.slice(0, 6).map((item) => item.label).join(" | ") ?? "(nothing)";
+	const more = items && items.length > 6 ? ` | +${items.length - 6}` : "";
+	console.log(`  /magpie ${prefix}`.padEnd(22) + `→ ${shown}${more}`);
 }

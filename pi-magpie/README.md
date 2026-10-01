@@ -6,7 +6,7 @@
 | --- | --- |
 | Provider | `magpie` |
 | Login | `/login magpie` — endpoint (default `http://127.0.0.1:3425`) and API key (default `magpie`, which a loopback gateway accepts) |
-| Commands | `/magpie`, `/magpie quota [model]`, `/magpie group [id]`, `/magpie groups`, `/magpie refresh`, `/magpie endpoint` |
+| Commands | `/magpie`, `/magpie quota [model]`, `/magpie group [id]`, `/magpie groups`, `/magpie refresh`, `/magpie endpoint`, `/magpie help` — all of them complete on Tab |
 | Status bar | `magpie Codex · 14% · 3d`, `magpie smart → xiaomi/mimo-v2.6-flash` |
 | Credential | pi's `auth.json`: `{"type":"api_key","key":"…","env":{"MAGPIE_GW_URL":"http://127.0.0.1:3425"}}` |
 
@@ -59,13 +59,30 @@ same way — give its address and the `lanKey` from magpie's settings instead.
 ## Commands
 
 ```text
-/magpie                  the current model: endpoint, API, quota or routing
+/magpie                  where the gateway is, what it serves, and the current
+                         model's quota or routing group
 /magpie quota [model]    what the model's provider has left, every account
 /magpie group [id]       a routing group's members, rules and last decision
 /magpie groups           every routing group magpie offers
 /magpie refresh          fetch magpie's catalog again now
 /magpie endpoint         the gateway in use, and whether models.json also names it
+/magpie help             the same list, on its own
 ```
+
+Typing `/magpie ` and pressing Tab lists those subcommands with what each one
+reports, and the subcommand's own Tab lists the ids it takes — every model for
+`quota`, every routing group for `group`, filtered as you type:
+
+```text
+/magpie quota mimo   → group/auto-mimo-v2-6-flash | opencode-go/mimo-v2.6-flash | …
+/magpie group        → group/auto-deepseek-v4-1-flash | group/auto-mimo-v2-6-flash
+```
+
+`/magpie` on its own is the overview: the endpoint and whether it is on this
+machine, how many models and groups the catalog holds, and the current model's
+own reading. For a model that is its tightest quota window; for a routing
+group, its rule and the member that answered last. Not on a magpie model? It
+says so, and leaves the status bar alone.
 
 `/magpie group <id>` works for any group, not just the current one — it is how
 you look at what `group/auto-mimo-v2-6-flash` routes to, or why a request went
