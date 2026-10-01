@@ -124,6 +124,23 @@ test("toPiModel: an Anthropic model keeps the root, adaptive ones are told so", 
 	assert.equal(model.thinkingLevelMap?.off, "none");
 });
 
+test("toPiModel: reasoning with no levels is a thinking switch, not a non-thinking model", () => {
+	// yetone/magpie#402: the gateway marks a switch-only model `reasoning: true`
+	// with empty levels; pi must accept thinking requests and expose no tiers.
+	const model = toPiModel(
+		{
+			id: "opencode-go/mimo-v2.6-flash",
+			display_name: "MiMo-V2.6-Flash",
+			reasoning: true,
+			supported_reasoning_levels: [],
+			native_endpoints: ["/v1/chat/completions", "/v1/responses"],
+		},
+		ROOT,
+	);
+	assert.equal(model.reasoning, true);
+	assert.equal(model.thinkingLevelMap, undefined);
+});
+
 test("toPiModel: an entry without limits still becomes a usable model", () => {
 	const model = toPiModel({ id: "deepseek/deepseek-chat" }, ROOT);
 	assert.equal(model.name, "deepseek/deepseek-chat");

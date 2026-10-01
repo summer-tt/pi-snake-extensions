@@ -28,7 +28,9 @@ it:
 - **Reasoning levels come from the model.** `supported_reasoning_levels`
   becomes pi's `thinkingLevelMap`: levels the model has are offered, the rest
   are hidden. A Claude from 4.6 on is marked adaptive, so pi asks for adaptive
-  thinking instead of a budget it would refuse.
+  thinking instead of a budget it would refuse. An entry magpie marks
+  `reasoning: true` with no levels is a thinking switch with no tiers: pi
+  offers thinking, and no level list.
 - **The footer follows the current model, and the terminal's width.** For a
   model, the tightest quota window magpie reports for that provider:
   `magpie 14% left · reset 3d`, cut to `mag 14% · 3d` when there is no room

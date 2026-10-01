@@ -128,7 +128,10 @@ export function toPiModel(entry: MagpieModelEntry, root: string): PiMagpieModel 
 		baseUrl: baseUrlFor(root, endpoint),
 		input: input.length > 0 ? input : ["text"],
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		reasoning: efforts.length > 0,
+		// magpie records "does reason" separately from "has adjustable levels":
+		// `reasoning: true` with empty levels is a thinking switch with no effort
+		// tiers (yetone/magpie#402), so the flag rides along either way.
+		reasoning: entry.reasoning === true || efforts.length > 0,
 		contextWindow: positive(contextWindow) ?? DEFAULT_CONTEXT_WINDOW,
 		maxTokens: positive(entry.max_output_tokens) ?? DEFAULT_MAX_TOKENS,
 	};

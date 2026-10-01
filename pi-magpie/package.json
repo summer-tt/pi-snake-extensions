@@ -1,6 +1,6 @@
 {
 	"name": "pi-magpie",
-	"version": "0.1.2",
+	"version": "0.1.3",
 	"description": "The magpie gateway as a pi provider: live model catalog, quotas, routing",
 	"keywords": [
 		"pi",
