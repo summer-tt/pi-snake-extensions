@@ -20,6 +20,13 @@ Hard global cap on every model's context window (default 300K) — compaction,
 the context meter, and overflow recovery all follow the cap. Global switch via
 `/context-window-cap toggle`, cap value via `/context-window-cap set 300k`.
 
+### pi-magpie
+
+[magpie](https://github.com/yetone/magpie)'s gateway as a pi provider — the
+live model list, quotas and routing groups instead of a frozen `models.json`.
+`/login magpie`, then `/magpie`, `/magpie quota`, `/magpie group`,
+`/magpie groups`.
+
 ## Install
 
 ```bash

@@ -1,0 +1,55 @@
+{
+	"name": "pi-magpie",
+	"version": "0.1.0",
+	"description": "The magpie gateway as a pi provider: live model catalog, quotas, routing",
+	"keywords": [
+		"pi",
+		"pi-package",
+		"pi-extension",
+		"magpie",
+		"gateway",
+		"provider",
+		"routing",
+		"quota"
+	],
+	"homepage": "https://github.com/tinysnake/pi-snake-extensions#readme",
+	"bugs": {
+		"url": "https://github.com/tinysnake/pi-snake-extensions/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/tinysnake/pi-snake-extensions.git",
+		"directory": "pi-magpie"
+	},
+	"license": "MIT",
+	"author": "SNAKE (https://github.com/tinysnake)",
+	"type": "module",
+	"main": "./index.ts",
+	"files": [
+		"*.ts",
+		"README.md",
+		"CHANGELOG.md",
+		"!tests/"
+	],
+	"scripts": {
+		"test": "node --test tests/*.test.ts",
+		"typecheck": "tsc --noEmit",
+		"smoke": "node scripts/smoke.mjs",
+		"commands": "node scripts/commands.mjs"
+	},
+	"pi": {
+		"extensions": [
+			"./index.ts"
+		]
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "*",
+		"@earendil-works/pi-ai": "*"
+	},
+	"engines": {
+		"node": ">=22.6"
+	},
+	"publishConfig": {
+		"access": "public"
+	}
+}
