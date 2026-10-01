@@ -34,8 +34,8 @@ export interface QuotaView {
 	entries: QuotaEntry[];
 	/** The window the footer shows: the least left, then the soonest to reset. */
 	tightest?: { entry: QuotaEntry; window: QuotaWindow };
-	/** One line for the footer, or undefined when nothing is known. */
-	status?: string;
+	/** The footer's reading at both widths, or undefined when nothing is known. */
+	status?: StatusForms;
 	/** Lines for `/magpie`. */
 	report: string[];
 }
@@ -131,20 +131,44 @@ export function quotaView(entries: readonly QuotaEntry[], provider: string, now 
 			report.push(`  ${name} ${windowText(window)}${reset ? ` · resets ${reset}` : ""}`);
 		}
 	}
-	return { entries: selected, tightest, status: statusLine(tightest, now), report };
+	return { entries: selected, tightest, status: statusForms(tightest, now), report };
 }
 
-/** The one-line footer reading of a quota. */
-export function statusLine(
+/** The footer reading of a quota at both widths it may be shown at. */
+export interface StatusForms {
+	/** Roomy footer: `16% left · reset 3d`. */
+	full: string;
+	/** Footer with no room: `16% · 3d`. */
+	short: string;
+}
+
+/**
+ * The one-line footer reading of a quota: the share left spelled out with room,
+ * cut to the bare number without. Both forms are label-less — the caller
+ * prefixes the provider and picks the tier by the width it has.
+ */
+export function statusForms(
 	tightest: { entry: QuotaEntry; window: QuotaWindow } | undefined,
 	now = Date.now(),
-): string | undefined {
+): StatusForms | undefined {
 	if (!tightest) return undefined;
-	const { entry, window } = tightest;
-	const parts = [entry.name?.trim() || entry.provider || "quota", windowText(window)];
+	const { window } = tightest;
+	const remaining = remainingPercent(window);
+	const share = remaining === undefined ? windowText(window) : `${Math.round(remaining)}%`;
 	const reset = formatReset(window.resetsAt, now);
-	if (reset) parts.push(reset);
-	return parts.join(" · ");
+	return {
+		full: `${share} left${reset ? ` · reset ${reset}` : ""}`,
+		short: `${share}${reset ? ` · ${reset}` : ""}`,
+	};
+}
+
+/**
+ * The footer line at the width there is: the full reading when `budget` has
+ * room for it (label included), the cut one when it does not.
+ */
+export function statusForWidth(forms: StatusForms, budget: number, label: string, cutLabel: string): string {
+	const full = `${label} ${forms.full}`;
+	return full.length <= budget ? full : `${cutLabel} ${forms.short}`;
 }
 
 /** `OpenCode Go · plus · user@example.com (subscription)`. */

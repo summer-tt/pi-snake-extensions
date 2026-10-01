@@ -2,6 +2,20 @@
 
 All notable changes to pi-magpie.
 
+## 0.1.2
+
+- `reasoning` follows magpie's own flag as well as the level list: an entry
+  with `reasoning: true` and empty `supported_reasoning_levels` (a thinking
+  switch with no effort tiers, e.g. `mimo-v2.6-flash` through the relay;
+  yetone/magpie#402) is now a reasoning model with no tiers, not a
+  non-thinking one.
+- The footer's quota line reads the tightest window at the width there is:
+  `magpie 14% left · reset 3d` when the terminal has room, cut to
+  `mag 14% · 3d` when it does not. The full form is tried against the
+  terminal width minus 40 columns — always left for the other extensions'
+  statuses, which share the line — and a terminal resize repaints the cached
+  reading instead of refetching it.
+
 ## 0.1.1
 
 - `/magpie` on its own is the overview: endpoint and whether it is local, the

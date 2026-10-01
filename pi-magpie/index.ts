@@ -32,7 +32,7 @@ import {
 	routingDays,
 	runMagpie,
 } from "./gateway.ts";
-import { quotaView, type QuotaEntry } from "./quota.ts";
+import { quotaView, statusForWidth, type QuotaEntry, type StatusForms } from "./quota.ts";
 import {
 	describeRoute,
 	type GroupInfo,
@@ -48,6 +48,17 @@ import { createMagpieProvider, type MagpieProviderHandle, ownedByEntry } from ".
 import { argumentCompletions, findSubcommand, usageLines } from "./usage.ts";
 
 const PROVIDER_LABEL = "magpie";
+/** The status label when the footer has no room for the whole word: `magpie` → `mag`. */
+const STATUS_LABEL_CUT = "mag";
+/**
+ * Columns this status leaves to the footer's other statuses. Extension statuses
+ * share one line in alphabetical key order and `magpie` sorts first, so a
+ * greedy quota line would push every sibling into the truncation zone.
+ */
+const STATUS_BUDGET_MARGIN = 40;
+
+/** What the footer shows for one model, recomputed against the width on a resize. */
+type StatusRender = () => string | undefined;
 
 /** What this extension knows about the gateway right now. */
 interface GatewayAuth {
@@ -61,11 +72,14 @@ export default function (pi: ExtensionAPI): void {
 	const magpie = createMagpieProvider();
 	pi.registerProvider(magpie.provider);
 
-	let cache: { key: string; at: number; text?: string } | undefined;
+	let cache: { key: string; at: number; render: StatusRender } | undefined;
 	let generation = 0;
+	/** The context the current status was set from, so a resize can repaint it. */
+	let statusCtx: ExtensionContext | undefined;
 
 	const refreshStatus = async (ctx: ExtensionContext, force = false): Promise<void> => {
 		if (!ctx.hasUI) return;
+		statusCtx = ctx;
 		const model = ctx.model;
 		if (!model || model.provider !== PROVIDER_ID) {
 			ctx.ui.setStatus(STATUS_KEY, undefined);
@@ -74,20 +88,29 @@ export default function (pi: ExtensionAPI): void {
 		}
 		const hit = cache;
 		if (!force && hit && hit.key === model.id && Date.now() - hit.at < STATUS_TTL_MS) {
-			ctx.ui.setStatus(STATUS_KEY, hit.text);
+			ctx.ui.setStatus(STATUS_KEY, hit.render());
 			return;
 		}
 		const mine = ++generation;
-		let text: string | undefined;
+		let render: StatusRender;
 		try {
-			text = await statusText(ctx, magpie, model);
+			render = await statusRender(ctx, magpie, model);
 		} catch {
-			text = `${PROVIDER_LABEL} unreachable`;
+			render = () => `${PROVIDER_LABEL} unreachable`;
 		}
 		if (mine !== generation) return;
-		cache = { key: model.id, at: Date.now(), text };
-		ctx.ui.setStatus(STATUS_KEY, text);
+		cache = { key: model.id, at: Date.now(), render };
+		ctx.ui.setStatus(STATUS_KEY, render());
 	};
+
+	// setStatus takes a fixed string, so the width-aware tiers are chosen when it
+	// is set: repaint the cached reading at the terminal's new width.
+	process.stdout.on("resize", () => {
+		const ctx = statusCtx;
+		const render = cache?.render;
+		if (!ctx?.hasUI || !render) return;
+		ctx.ui.setStatus(STATUS_KEY, render());
+	});
 
 	pi.on("session_start", async (event, ctx) => {
 		if (event.reason === "startup") await warnIfModelsJsonHandlesMagpie(ctx);
@@ -117,26 +140,36 @@ export default function (pi: ExtensionAPI): void {
 // The footer
 // =============================================================================
 
-async function statusText(
+async function statusRender(
 	ctx: ExtensionContext,
 	magpie: MagpieProviderHandle,
 	model: Model<Api>,
-): Promise<string> {
+): Promise<StatusRender> {
 	const auth = await gatewayAuth(ctx);
-	if (!auth) return `${PROVIDER_LABEL} ${model.name}`;
+	if (!auth) return () => `${PROVIDER_LABEL} ${model.name}`;
 	if (model.id.startsWith(GROUP_PREFIX)) {
 		const id = model.id.slice(GROUP_PREFIX.length);
 		const route = await lastRouteFor(id);
 		const info = await groupDefinition(id);
 		const status = groupStatus(route, info);
-		return status ? `${PROVIDER_LABEL} ${status}` : `${PROVIDER_LABEL} ${model.name}`;
+		return () => (status ? `${PROVIDER_LABEL} ${status}` : `${PROVIDER_LABEL} ${model.name}`);
 	}
-	if (!auth.local) return `${PROVIDER_LABEL} ${model.name}`;
+	if (!auth.local) return () => `${PROVIDER_LABEL} ${model.name}`;
 	const provider = await quotaProviderFor(magpie, auth, model.id);
-	if (!provider) return `${PROVIDER_LABEL} ${model.name}`;
+	if (!provider) return () => `${PROVIDER_LABEL} ${model.name}`;
 	const entries = await fetchQuotas(auth.root, auth.token, AbortSignal.timeout(8_000));
 	const view = quotaView(entries, provider);
-	return view.status ? `${PROVIDER_LABEL} ${view.status}` : `${PROVIDER_LABEL} ${provider} — no quota reported`;
+	const forms = view.status;
+	if (!forms) return () => `${PROVIDER_LABEL} ${provider} — no quota reported`;
+	return () => statusForWidth(forms, statusBudget(), PROVIDER_LABEL, STATUS_LABEL_CUT);
+}
+
+/** Columns this status may take: the terminal, less what sibling statuses may show. */
+function statusBudget(): number {
+	const columns = process.stdout.columns;
+	return typeof columns === "number" && columns > 0
+		? columns - STATUS_BUDGET_MARGIN
+		: Number.POSITIVE_INFINITY;
 }
 
 // =============================================================================

@@ -29,8 +29,11 @@ it:
   becomes pi's `thinkingLevelMap`: levels the model has are offered, the rest
   are hidden. A Claude from 4.6 on is marked adaptive, so pi asks for adaptive
   thinking instead of a budget it would refuse.
-- **The footer follows the current model.** For a model, the tightest quota
-  window magpie reports for that provider (`Codex · 14% · 3d`). For a routing
+- **The footer follows the current model, and the terminal's width.** For a
+  model, the tightest quota window magpie reports for that provider:
+  `magpie 14% left · reset 3d`, cut to `mag 14% · 3d` when there is no room
+  (40 columns are always left for the other extensions' statuses, and a
+  resize repaints the line at the new width). For a routing
   group, its routing strategy and the member that answered last
   (`smart → xiaomi/mimo-v2.6-flash`). Leaving `magpie` for another provider
   clears it.

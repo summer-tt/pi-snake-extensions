@@ -5,7 +5,8 @@ import {
 	quotaView,
 	remainingPercent,
 	selectQuotas,
-	statusLine,
+	statusForms,
+	statusForWidth,
 	tightestWindow,
 	windowText,
 	type QuotaEntry,
@@ -79,16 +80,35 @@ test("formatReset: as magpie's own clock reads it", () => {
 	assert.equal(formatReset("2026-12-24T00:00:00+08:00", NOW), "2026-12-23");
 });
 
-test("statusLine: the tightest window, one line", () => {
-	assert.equal(statusLine(tightestWindow([codex]), NOW), "Codex · 16% · 3d");
-	assert.equal(statusLine(tightestWindow([workbuddy]), NOW), "WorkBuddy · 0 / 6900");
-	assert.equal(statusLine(undefined, NOW), undefined);
+test("statusForms: the share left spelled out, and cut", () => {
+	assert.deepEqual(statusForms(tightestWindow([codex]), NOW), {
+		full: "16% left · reset 3d",
+		short: "16% · 3d",
+	});
+	// workbuddy's window names a display but reports no reset time.
+	assert.deepEqual(statusForms(tightestWindow([workbuddy]), NOW), {
+		full: "100% left",
+		short: "100%",
+	});
+	// A vendor that said no numbers at all falls back to its own wording.
+	assert.deepEqual(statusForms(tightestWindow([{ provider: "p", windows: [{ display: "0 / 6900" }] }]), NOW), {
+		full: "0 / 6900 left",
+		short: "0 / 6900",
+	});
+	assert.equal(statusForms(undefined, NOW), undefined);
+});
+
+test("statusForWidth: the full reading when it fits, the cut one when it does not", () => {
+	const forms = { full: "16% left · reset 3d", short: "16% · 3d" };
+	assert.equal(statusForWidth(forms, 26, "magpie", "mag"), "magpie 16% left · reset 3d");
+	assert.equal(statusForWidth(forms, 25, "magpie", "mag"), "mag 16% · 3d");
+	assert.equal(statusForWidth(forms, -10, "magpie", "mag"), "mag 16% · 3d");
 });
 
 test("quotaView: report lines, and an error is reported as one", () => {
 	const view = quotaView([codex, workbuddy], "codex", NOW);
 	assert.equal(view.entries.length, 1);
-	assert.equal(view.status, "Codex · 16% · 3d");
+	assert.deepEqual(view.status, { full: "16% left · reset 3d", short: "16% · 3d" });
 	assert.deepEqual(view.report, [
 		"Codex · plus · tffan@tutamail.com (subscription)",
 		"  5 hours 97% · resets 4h",
