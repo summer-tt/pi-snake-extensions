@@ -2,8 +2,9 @@
  * pi-magpie — magpie's gateway as a pi provider, with its quotas and routing
  * groups in the footer and under `/magpie`.
  *
- *   /login magpie        endpoint (default http://127.0.0.1:3425) and API key
- *                        (default magpie, which a loopback gateway accepts)
+ *   /login magpie        optional: point at another gateway and key. Without
+ *                        it the extension reaches magpie's own loopback
+ *                        default (http://127.0.0.1:3425, key "magpie")
  *   /magpie              where the gateway is, what it serves, and the current
  *                        model's quota or routing group
  *   /magpie quota [id]   what the model's provider has left
@@ -18,7 +19,7 @@
 
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai/compat";
-import { GROUP_PREFIX, PROVIDER_ID, ROOT_ENV, STATUS_KEY, STATUS_TTL_MS } from "./constants.ts";
+import { DEFAULT_TOKEN, GROUP_PREFIX, PROVIDER_ID, ROOT_ENV, STATUS_KEY, STATUS_TTL_MS } from "./constants.ts";
 import {
 	defaultRoot,
 	fetchModel,
@@ -66,6 +67,8 @@ interface GatewayAuth {
 	token: string;
 	/** Whether the gateway is on this machine: quotas and routing history are. */
 	local: boolean;
+	/** Whether an endpoint was stored by `/login magpie`, rather than the default. */
+	stored: boolean;
 }
 
 export default function (pi: ExtensionAPI): void {
@@ -163,7 +166,6 @@ async function statusRender(
 	model: Model<Api>,
 ): Promise<StatusRender> {
 	const auth = await gatewayAuth(ctx);
-	if (!auth) return () => `${PROVIDER_LABEL} ${model.name}`;
 	if (model.id.startsWith(GROUP_PREFIX)) {
 		const id = model.id.slice(GROUP_PREFIX.length);
 		const route = await lastRouteFor(id);
@@ -234,16 +236,16 @@ async function overviewReport(
 	const models = magpieModels(ctx);
 	const groups = models.filter((model) => model.id.startsWith(GROUP_PREFIX)).length;
 	const lines = [
-		auth
-			? `${PROVIDER_LABEL} · ${gatewayUrlFor(auth.root)} · ${auth.local ? "this machine" : "remote"} · logged in`
-			: `${PROVIDER_LABEL} · logged out — /login magpie asks for the endpoint and the key`,
+		`${PROVIDER_LABEL} · ${gatewayUrlFor(auth.root)} · ${
+			auth.local ? "this machine" : "remote"
+		} · ${auth.stored ? "logged in" : "default gateway"}`,
 		`catalog: ${count(models.length, "model")}${groups > 0 ? ` · ${count(groups, "routing group")}` : ""}`,
 	];
 	const model = ctx.model;
-	if (auth && model?.provider === PROVIDER_ID) {
+	if (model?.provider === PROVIDER_ID) {
 		lines.push(`current: ${model.name} (${model.id}) · ${model.api}`);
 		lines.push(...(await currentLines(ctx, magpie, auth, now)).map((line) => `  ${line}`));
-	} else if (auth) {
+	} else {
 		lines.push(
 			`current: ${model ? `${model.provider}/${model.id}` : "no model"} — not a magpie one${models.length > 0 ? " (/model lists them)" : ""}`,
 		);
@@ -271,10 +273,6 @@ function helpReport(): string[] {
 	return [`${PROVIDER_LABEL} — the gateway's models, quotas and routing groups`, ...usageLines()];
 }
 
-function notConfigured(): string {
-	return `${PROVIDER_LABEL} is not configured — /login magpie asks for the endpoint and the key`;
-}
-
 function count(amount: number, noun: string): string {
 	return `${amount} ${noun}${amount === 1 ? "" : "s"}`;
 }
@@ -286,7 +284,6 @@ async function quotaReport(
 	now: number,
 ): Promise<string[]> {
 	const auth = await gatewayAuth(ctx);
-	if (!auth) return [notConfigured()];
 	const model = target
 		? magpieModels(ctx).find((entry) => entry.id === target || entry.name === target)
 		: ctx.model?.provider === PROVIDER_ID
@@ -397,8 +394,6 @@ async function groupsReport(ctx: ExtensionContext, magpie: MagpieProviderHandle)
 }
 
 async function refreshReport(ctx: ExtensionContext): Promise<string[]> {
-	const auth = await gatewayAuth(ctx);
-	if (!auth) return [notConfigured()];
 	const result = await ctx.modelRegistry.refresh({ providers: [PROVIDER_ID], force: true });
 	const error = result.errors.get(PROVIDER_ID);
 	if (error) return [`could not refresh magpie's catalog: ${error.message}`];
@@ -409,9 +404,7 @@ async function refreshReport(ctx: ExtensionContext): Promise<string[]> {
 async function endpointReport(ctx: ExtensionContext): Promise<string[]> {
 	const auth = await gatewayAuth(ctx);
 	const lines = [
-		auth
-			? `endpoint: ${gatewayUrlFor(auth.root)}${auth.local ? "" : " (remote)"}`
-			: "endpoint: not configured — /login magpie asks for one",
+		`endpoint: ${gatewayUrlFor(auth.root)}${auth.local ? "" : " (remote)"} (${auth.stored ? "stored" : "default"})`,
 		`default:  ${gatewayUrlFor(defaultRoot())}`,
 		`stored:   pi's auth.json (provider "${PROVIDER_ID}", env ${ROOT_ENV})`,
 		"/login magpie changes the endpoint and the key; /logout magpie forgets them",
@@ -420,7 +413,7 @@ async function endpointReport(ctx: ExtensionContext): Promise<string[]> {
 	lines.push(`auth: ${status.configured ? (status.label ?? status.source ?? "configured") : "not configured"}`);
 	if (await magpieProviderInModelsJson(getAgentDir())) {
 		lines.push(
-			`note: ${modelsJsonPath(getAgentDir())} also names providers.${PROVIDER_ID} — magpie's static block overrides every model's base URL and makes the provider look configured without /login. Set Pi's model to default in magpie, or drop that block.`,
+			`note: ${modelsJsonPath(getAgentDir())} also names providers.${PROVIDER_ID} — magpie's static block overrides every model's base URL. Set Pi's model to default in magpie, or drop that block.`,
 		);
 	}
 	return lines;
@@ -430,15 +423,20 @@ async function endpointReport(ctx: ExtensionContext): Promise<string[]> {
 // Gateway facts
 // =============================================================================
 
-/** The gateway this session talks to, or undefined when nothing is configured. */
-async function gatewayAuth(ctx: ExtensionContext): Promise<GatewayAuth | undefined> {
+/**
+ * The gateway this session talks to: the one `/login magpie` stored, or
+ * magpie's own loopback default — installing the extension is enough to reach
+ * a magpie on this machine.
+ */
+async function gatewayAuth(ctx: ExtensionContext): Promise<GatewayAuth> {
 	const auth = await ctx.modelRegistry.getProviderAuth(PROVIDER_ID).catch(() => undefined);
-	const root = normalizeRoot(auth?.env?.[ROOT_ENV]);
-	if (!root) return undefined;
+	const stored = normalizeRoot(auth?.env?.[ROOT_ENV]);
+	const root = stored ?? defaultRoot();
 	return {
 		root,
-		token: auth?.auth.apiKey?.trim() || "magpie",
+		token: auth?.auth.apiKey?.trim() || DEFAULT_TOKEN,
 		local: isLoopback(root),
+		stored: Boolean(stored),
 	};
 }
 
@@ -495,16 +493,16 @@ async function groupRoutes(): Promise<Map<string, Route>> {
 /**
  * magpie writes `providers.magpie` into pi's models.json whenever one of its
  * models is picked for Pi there. That block changes what this extension's
- * models get: one baseUrl for every model of the provider, and a configured
- * provider before `/login`. Say so once, at startup.
+ * models get: one baseUrl for every model of the provider. Say so once, at
+ * startup.
  */
 async function warnIfModelsJsonHandlesMagpie(ctx: ExtensionContext): Promise<void> {
 	const status = ctx.modelRegistry.getProviderAuthStatus(PROVIDER_ID);
-	if (status.source !== "stored" && status.source !== "runtime") return;
+	if (!status.configured) return;
 	if (!(await magpieProviderInModelsJson(getAgentDir()))) return;
 	const warning = [
 		`magpie: ${modelsJsonPath(getAgentDir())} still names providers.${PROVIDER_ID}.`,
-		"magpie's static block there overrides every model's base URL (an Anthropic model would be asked at /v1/v1/messages) and makes the provider look configured before /login.",
+		"magpie's static block there overrides every model's base URL (an Anthropic model would be asked at /v1/v1/messages).",
 		"Next to it, pi prefers magpie's frozen model list over this extension's live catalog.",
 		"Set Pi's model to default in magpie (or delete that block) to let the live catalog through.",
 	].join("\n");

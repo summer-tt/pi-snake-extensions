@@ -6,9 +6,11 @@
  * disappear with magpie instead of being frozen into models.json. Requests are
  * handed to pi-ai's built-in implementation for the protocol each model speaks.
  *
- * `/login magpie` asks for the gateway endpoint and its API key; both live in
- * pi's auth.json (`{type:"api_key", key, env:{MAGPIE_GW_URL}}`), and the
- * provider is unconfigured until that has happened.
+ * `/login magpie` is optional: with no stored endpoint the provider answers
+ * from magpie's own loopback default (`$MAGPIE_GW_URL`, `$MAGPIE_ADDR`, else
+ * `http://127.0.0.1:3425`), so installing the extension is enough to reach a
+ * magpie on this machine. A stored endpoint (`{type:"api_key", key,
+ * env:{MAGPIE_GW_URL}}`) points it elsewhere.
  */
 
 import {
@@ -131,16 +133,19 @@ export function createMagpieProvider(): MagpieProviderHandle {
 					return { type: "api_key", key, env: { [ROOT_ENV]: root } };
 				},
 				async check({ credential }) {
-					const root = rootFromCredential(credential);
-					return root ? { type: "api_key", source: "stored credential" } : undefined;
+					// A stored endpoint or magpie's loopback default is enough to try;
+					// whether it answers is a question for the catalog fetch, not auth.
+					return {
+						type: "api_key",
+						source: rootFromCredential(credential) ? "stored credential" : "default gateway",
+					};
 				},
 				async resolve({ credential }) {
-					const root = rootFromCredential(credential);
-					if (!root) return undefined;
+					const stored = rootFromCredential(credential);
 					const result: AuthResult = {
 						auth: { apiKey: tokenOf(credential) },
-						env: { [ROOT_ENV]: root },
-						source: "stored credential",
+						env: { [ROOT_ENV]: stored ?? defaultRoot() },
+						source: stored ? "stored credential" : "default gateway",
 					};
 					return result;
 				},
@@ -149,13 +154,10 @@ export function createMagpieProvider(): MagpieProviderHandle {
 		getModels: () => models.filter((model) => isModelType(model, "chat")),
 		getAllModels: () => models,
 		async refreshModels(context: RefreshModelsContext) {
-			const root = rootFromCredential(context.credential);
-			if (!root) {
-				// Logged out: neither the stored list nor a request may be trusted.
-				fromLogin = undefined;
-				if (models.length > 0) await context.publish({ update: () => install([]) });
-				return;
-			}
+			// A stored endpoint names the gateway; without one, magpie's own
+			// loopback default is the gateway, so installing is enough to browse it.
+			const storedRoot = rootFromCredential(context.credential);
+			const root = storedRoot ?? defaultRoot();
 			if (context.stored) {
 				const restored = (context.stored.models as readonly PiMagpieModel[]).filter(
 					(model) =>
@@ -173,7 +175,15 @@ export function createMagpieProvider(): MagpieProviderHandle {
 				return;
 			}
 			if (!context.allowNetwork || context.signal.aborted) return;
-			const entries = await fetchCatalog(root, tokenOf(context.credential), context.signal);
+			let entries: MagpieModelEntry[];
+			try {
+				entries = await fetchCatalog(root, tokenOf(context.credential), context.signal);
+			} catch (error) {
+				// A stored gateway that is down is worth saying so; the loopback
+				// default that is simply not running is not — the catalog is just empty.
+				if (storedRoot) throw error;
+				return;
+			}
 			if (context.signal.aborted) return;
 			const next = toPiModels(entries, root);
 			await context.publish({

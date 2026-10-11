@@ -1,100 +1,101 @@
 # pi-magpie
 
-> [magpie](https://github.com/yetone/magpie)'s gateway as a pi provider — magpie's own model list, quotas and routing groups instead of a frozen `models.json`.
+> **One gateway, every provider — and it just works.**
 
-| | |
-| --- | --- |
-| Provider | `magpie` |
-| Login | `/login magpie` — endpoint (default `http://127.0.0.1:3425`) and API key (default `magpie`, which a loopback gateway accepts) |
-| Commands | `/magpie`, `/magpie quota [model]`, `/magpie group [id]`, `/magpie groups`, `/magpie refresh`, `/magpie endpoint`, `/magpie help` — all of them complete on Tab |
-| Status bar | `magpie Codex · 14% · 3d`, `magpie smart → opencode-go`, `magpie order → ant..ity/gemini-3.8-flash` |
-| Credential | pi's `auth.json`: `{"type":"api_key","key":"…","env":{"MAGPIE_GW_URL":"http://127.0.0.1:3425"}}` |
+[magpie](https://github.com/yetone/magpie)'s gateway as a pi provider. Install
+the extension, and pi talks to the magpie running on your machine — no login,
+no endpoint to type, no key to paste. magpie listens on a loopback address
+with a default port, so the extension finds it on its own.
+
+magpie is one local endpoint in front of every model provider you have. It
+keeps one live model list, one quota view, and one routing engine that picks
+which account answers each request. This extension makes pi a first-class
+client of it.
+
+## Zero setup
+
+magpie's own defaults are the extension's defaults. With nothing configured,
+it reaches `http://127.0.0.1:3425` with the key `magpie` — the endpoint
+magpie listens on out of the box. Install, and your magpie models are there.
+
+```
+pi install npm:pi-magpie     # then open pi and pick a magpie model
+```
+
+If magpie isn't running, the catalog is simply empty — no errors, no setup
+wizard. Start magpie and `/magpie refresh`.
+
+A gateway somewhere else (a LAN box, a shared key) is the only thing that
+needs a step: `/login magpie` asks for its endpoint and API key, and
+`$MAGPIE_GW_URL` / `$MAGPIE_ADDR` set the default when you'd rather not store
+one.
 
 ## What it does
 
-One local gateway in front of every provider, with one model list, one quota
-view and one routing decision. This extension makes pi a first-class client of
-it:
-
-- **The model list is magpie's.** Every catalog fetch reads `GET /v1/models`
-  and installs what magpie serves right now — routing groups, subscriptions,
-  accounts and providers appear and disappear with magpie, instead of being
-  frozen into `models.json` by whichever model magpie last wrote there.
-- **Each model is asked on the protocol its provider speaks natively.** magpie
-  reports `native_endpoints`; a Responses model goes to `{root}/v1`, an
-  Anthropic Messages model to `{root}` (the SDK appends `/v1`), everything else
-  to `{root}/v1` over Chat Completions. magpie then relays instead of
-  translating.
+- **The model list is magpie's, live.** Every refresh reads `GET /v1/models`
+  and installs exactly what magpie serves right now — routing groups,
+  subscriptions, accounts and providers appear and disappear with magpie,
+  instead of being frozen into a `models.json` that goes stale.
+- **Each model is asked on the protocol its provider speaks natively.** A
+  Responses model goes to the Responses API, a Claude to Anthropic Messages,
+  everything else over Chat Completions — magpie relays instead of translating.
 - **Reasoning levels come from the model.** `supported_reasoning_levels`
-  becomes pi's `thinkingLevelMap`: levels the model has are offered, the rest
-  are hidden. A Claude from 4.6 on is marked adaptive, so pi asks for adaptive
-  thinking instead of a budget it would refuse. An entry magpie marks
-  `reasoning: true` with no levels is a thinking switch with no tiers: pi
-  offers thinking, and no level list.
-- **The footer follows the current model, and the terminal's width.** For a
-  model, the tightest quota window magpie reports for that provider:
-  `magpie 14% left · reset 3d`, cut to `mag 14% · 3d` when there is no room
-  (40 columns are always left for the other extensions' statuses, and a
-  resize repaints the line at the new width). For a routing
-  group, its routing strategy and the provider that answered last — just the
-  provider, spelled out, while every member is one model, the model carrying
-  no news (`smart → opencode-go`), provider and model when the members
-  differ (`order → ant..ity/gemini-3.8-flash`), a provider id over 8
-  characters cut in the middle only there (`antigravity` → `ant..ity`).
-  Leaving `magpie` for another provider clears it.
+  becomes pi's level list: levels the model has are offered, the rest hidden.
+  A Claude from 4.6 on is marked adaptive, so pi asks for adaptive thinking
+  instead of a budget it would refuse.
+- **The footer tells you what's actually serving you.** On a model, its
+  tightest quota window (`magpie 14% left · reset 3d`); on a routing group,
+  the strategy and the provider that answered last (`smart → opencode-go`).
+  It follows the terminal's width and repaints on resize.
 - **No protocol code.** Requests are handed to pi-ai's built-in
   `openai-completions`, `openai-responses` and `anthropic-messages`
   implementations, so message conversion, tool calls, usage accounting,
-  cancellation and the request-instrumentation hooks behave exactly as they do
-  for a built-in provider.
+  cancellation and instrumentation behave exactly as they do for a built-in
+  provider.
 
-## Install
+## The footer
 
-```bash
-pi install ./pi-magpie
+For a **model**, the tightest quota window magpie reports for that provider,
+cut to fit when the terminal is narrow (40 columns are always left for other
+extensions' statuses):
+
+```
+magpie 14% left · reset 3d        mag 14% · 3d
 ```
 
-Then `/login magpie`. The endpoint prompt is pre-filled with
-`http://127.0.0.1:3425` (or `$MAGPIE_GW_URL`, or `$MAGPIE_ADDR`), the key
-prompt with `magpie`. Login fetches the catalog once and shows it immediately;
-`/logout magpie` forgets both.
+For a **routing group**, the routing strategy and who answered last — the
+provider alone while every member is one model (the model carries no news),
+provider and model when the members differ. A provider id over 8 characters
+is cut in the middle:
 
-**Until you log in, the provider is unconfigured and pi shows no magpie
-models.** There is no silent loopback default: pointing pi at a gateway is a
-decision, and `/login magpie` is where it is made. A LAN gateway is set up the
-same way — give its address and the `lanKey` from magpie's settings instead.
+```
+magpie smart → opencode-go
+magpie order → ant..ity/gemini-3.8-flash
+```
+
+Leaving `magpie` for another provider clears the line.
 
 ## Commands
 
-```text
-/magpie                  where the gateway is, what it serves, and the current
-                         model's quota or routing group
-/magpie quota [model]    what the model's provider has left, every account
-/magpie group [id]       a routing group's members, rules and last decision
-/magpie groups           every routing group magpie offers
-/magpie refresh          fetch magpie's catalog again now
-/magpie endpoint         the gateway in use, and whether models.json also names it
-/magpie help             the same list, on its own
-```
+| | |
+| --- | --- |
+| `/magpie` | where the gateway is, what it serves, and the current model's quota or routing group |
+| `/magpie quota [model]` | what the model's provider has left, every account |
+| `/magpie group [id]` | a routing group's members, rules and last decision |
+| `/magpie groups` | every routing group magpie offers |
+| `/magpie refresh` | fetch magpie's catalog again now |
+| `/magpie endpoint` | the gateway in use, and whether models.json also names it |
+| `/magpie help` | the same list, on its own |
 
-Typing `/magpie ` and pressing Tab lists those subcommands with what each one
-reports, and the subcommand's own Tab lists the ids it takes — every model for
-`quota`, every routing group for `group`, filtered as you type:
+Every one completes on Tab: the subcommands while the first word is typed,
+then the ids the subcommand takes — every model for `quota`, every routing
+group for `group`, ranked by a fuzzy match that puts a prefix or a contiguous
+hit first.
 
-```text
-/magpie quota mimo   → group/auto-mimo-v2-6-flash | opencode-go/mimo-v2.6-flash | …
-/magpie group        → group/auto-deepseek-v4-1-flash | group/auto-mimo-v2-6-flash
-```
-
-`/magpie` on its own is the overview: the endpoint and whether it is on this
-machine, how many models and groups the catalog holds, and the current model's
-own reading. For a model that is its tightest quota window; for a routing
-group, its rule and the member that answered last. Not on a magpie model? It
-says so, and leaves the status bar alone.
-
-`/magpie group <id>` works for any group, not just the current one — it is how
-you look at what `group/auto-mimo-v2-6-flash` routes to, or why a request went
-to the account it did.
+`/magpie` on its own is the overview: the endpoint and whether it's the
+default or a stored one, how many models and groups the catalog holds, and
+the current model's own reading — its tightest quota window, or its group's
+rule and last answered member.
 
 ## Where the readings come from
 
@@ -106,36 +107,42 @@ to the account it did.
 | A group's last request | magpie's routing history, `~/.config/magpie/routing/<day>.jsonl` |
 
 The two readings magpie tells only this machine — quotas and the routing
-history — are simply skipped for a remote endpoint; the model list and the
-requests themselves work either way. The history is read from its tail, and the
-last decision is looked up per group in one pass, so a footer refresh does not
+history — are skipped for a remote endpoint; the model list and the requests
+themselves work either way. The history is read from its tail, and the last
+decision is looked up per group in one pass, so a footer refresh doesn't
 re-read a day's file.
 
 ## The `models.json` warning
 
 magpie writes a `providers.magpie` block into `~/.pi/agent/models.json`
-whenever one of its models is picked for pi in magpie's own UI. Once this
-extension is logged in, that block is reported at startup, because it changes
-what the live catalog gets:
+whenever one of its models is picked for pi in magpie's own UI. That block
+sets **one** `baseUrl` for every model of the provider — which would point an
+Anthropic model at `/v1/v1/messages` — and pi prefers its frozen `models`
+list over this extension's live catalog. Requests still work (the endpoint is
+stamped per request), but the model list and native paths don't. Set pi's
+model to `default` in magpie (which removes the block), or delete it by hand.
+The extension reports the conflict once at startup.
 
-- it sets **one** `baseUrl` for every model of the provider, which would point
-  an Anthropic model at `/v1/v1/messages`;
-- it makes the provider look configured before `/login`;
-- pi prefers its frozen `models` list over this extension's catalog.
-
-Requests still work — the endpoint is stamped per request from the credential's
-`MAGPIE_GW_URL` rather than trusted from the model — but the model list and the
-"must log in" rule do not. Set pi's model to `default` in magpie (which removes
-the block), or delete it by hand.
-
-## Notes and limits
+## Notes & limits
 
 - Every model reports cost `0`: magpie's catalog carries no prices. The
-  footer cost of a magpie session is therefore not meaningful; usage tokens are.
+  footer cost of a magpie session isn't meaningful; usage tokens are.
 - A routing group is a normal model id (`group/<id>`) — magpie does the
   routing, and pi sees one model.
-- `MAGPIE_BIN` points the group readings at another magpie binary; without the
-  CLI, a group still shows its id, its members from the catalog, and its last
-  request from the routing history.
-- `MAGPIE_ADDR` (magpie's own variable, `host:port`) is honoured as the
-  default endpoint when no credential is stored.
+- `MAGPIE_BIN` points the group readings at another magpie binary; without
+  the CLI, a group still shows its id, its members from the catalog, and its
+  last request from the routing history.
+- Quotas and the routing history are loopback-only, so a remote gateway shows
+  the model list and routes requests but reports neither.
+
+## Install
+
+```bash
+pi install npm:pi-magpie
+```
+
+From a local checkout (development): `pi install ./pi-magpie`.
+
+Requires Node ≥ 22.6 and pi ≥ 0.80. See
+[CHANGELOG.md](https://github.com/tinysnake/pi-snake-extensions/blob/master/pi-magpie/CHANGELOG.md)
+for the version history.

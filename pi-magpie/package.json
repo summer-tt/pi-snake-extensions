@@ -1,7 +1,7 @@
 {
 	"name": "pi-magpie",
-	"version": "0.1.4",
-	"description": "The magpie gateway as a pi provider: live model catalog, quotas, routing",
+	"version": "0.1.5",
+	"description": "magpie's gateway as a pi provider — live model catalog, quotas, routing groups. Works out of the box with a magpie on localhost.",
 	"keywords": [
 		"pi",
 		"pi-package",

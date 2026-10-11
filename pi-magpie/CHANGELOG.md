@@ -2,6 +2,16 @@
 
 All notable changes to pi-magpie.
 
+## 0.1.5
+
+- Works out of the box: with nothing configured, the provider answers from
+  magpie's own loopback default (`$MAGPIE_GW_URL`, `$MAGPIE_ADDR`, else
+  `http://127.0.0.1:3425`, key `magpie`), so installing the extension is
+  enough to reach a magpie on this machine — no `/login` step. A magpie that
+  isn't running just leaves the catalog empty; `/login magpie` still points
+  the provider at another gateway and key.
+- README rewritten to lead with the zero-setup story.
+
 ## 0.1.4
 
 - The footer's routing-group line leads with the provider that answered: a
