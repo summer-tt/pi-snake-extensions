@@ -393,13 +393,71 @@ export function describeRoute(route: Route, now = Date.now()): string[] {
 	return lines;
 }
 
-/** The footer reading of a group: its routing, and the last member to answer. */
+/** The footer reading of a group: its routing, and who answered last. */
 export function groupStatus(route: Route | undefined, info: GroupInfo | undefined): string | undefined {
 	const routing = route?.group?.routing || info?.routing;
-	const member = route?.served || route?.tries?.[route.tries.length - 1]?.model;
+	const served = route?.served || route?.tries?.[route.tries.length - 1]?.model;
+	// The members decide whether the model is news: the definition magpie gives
+	// now, else the list the last request was routed with.
+	const members = info?.members?.length ? info.members : route?.group?.members ?? [];
+	const provider = route?.provider || route?.tries?.[route.tries.length - 1]?.id || soleProvider(members);
 	const parts: string[] = [];
 	if (routing) parts.push(routing);
-	if (member) parts.push(`→ ${member}`);
-	else if (info?.members.length) parts.push(`${info.members.length} models`);
+	if (served) parts.push(`→ ${answerText(provider, served, members)}`);
+	else if (members.length > 0) parts.push(`${members.length} models`);
 	return parts.length > 0 ? parts.join(" ") : undefined;
+}
+
+/**
+ * Who answered, as the footer says it: the provider alone — spelled out, it
+ * is the whole story — while every member is the same model (the model
+ * carries no news, only the provider varies), provider and model when the
+ * members differ, a long provider cut to `ant..ity` only there. A provider
+ * the facts do not name leaves the model alone.
+ */
+function answerText(provider: string | undefined, served: string, members: string[]): string {
+	if (!provider) return served;
+	return oneModel(members) ? provider : `${abbrevProvider(provider)}/${served}`;
+}
+
+/** How wide a provider id may get in the footer before it is cut. */
+const PROVIDER_CUT = 8;
+
+/**
+ * A provider id for the footer: at most `PROVIDER_CUT` characters, longer ones
+ * cut in the middle with `..` — `antigravity` → `ant..ity`.
+ */
+export function abbrevProvider(id: string): string {
+	if (id.length <= PROVIDER_CUT) return id;
+	const keep = (PROVIDER_CUT - 2) / 2;
+	// Cut short of a separator, so `opencode-go` does not end in `..-go`.
+	const head = id.slice(0, keep).replace(/[-_.]+$/, "") || id.slice(0, keep);
+	const tail = id.slice(-keep).replace(/^[-_.]+/, "") || id.slice(-keep);
+	return `${head}..${tail}`;
+}
+
+/** Whether every member asks for one model — they differ only in provider. */
+function oneModel(members: string[]): boolean {
+	const model = members[0] === undefined ? undefined : memberModel(members[0]);
+	return model !== undefined && members.every((member) => memberModel(member) === model);
+}
+
+/** A member id's model half: `opencode-go/mimo-v2.6-flash:high` → `mimo-v2.6-flash`. */
+function memberModel(member: string): string {
+	const slash = member.indexOf("/");
+	const model = slash < 0 ? member : member.slice(slash + 1);
+	return model.replace(/:[^:]*$/, "");
+}
+
+/** The one provider every member names, when a single provider serves them all. */
+function soleProvider(members: string[]): string | undefined {
+	let sole: string | undefined;
+	for (const member of members) {
+		const slash = member.indexOf("/");
+		if (slash <= 0) continue;
+		const provider = member.slice(0, slash);
+		if (sole === undefined) sole = provider;
+		else if (sole !== provider) return undefined;
+	}
+	return sole;
 }

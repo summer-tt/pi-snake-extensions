@@ -2,6 +2,16 @@
 
 All notable changes to pi-magpie.
 
+## 0.1.4
+
+- The footer's routing-group line leads with the provider that answered: a
+  group whose members all ask for one model shows the provider alone,
+  spelled out (`smart → opencode-go`), one whose members differ keeps both,
+  cutting a provider id longer than 8 characters in the middle with `..`
+  only there (`order → ant..ity/gemini-3.8-flash`; `antigravity` →
+  `ant..ity`, short of a separator: `opencode-go` → `ope..go`); the provider
+  comes from the gateway's decision, or from the members when it names none.
+
 ## 0.1.3
 
 - `reasoning` follows magpie's own flag as well as the level list: an entry

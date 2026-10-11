@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+	abbrevProvider,
 	describeRoute,
 	groupStatus,
 	latestGroupRoute,
@@ -189,11 +190,55 @@ test("describedRoute: a physical request has no group", () => {
 	assert.equal(lines[1], "  weighed:");
 });
 
-test("groupStatus: routing and the member that answered, else the count", () => {
+test("groupStatus: routing and who answered, else the count", () => {
 	const route = parseRoute(GROUP_ROUTE);
-	assert.equal(groupStatus(route, undefined), "smart → mimo-v2.6-flash");
+	// Every member is mimo-v2.6-flash, so the provider alone carries the news —
+	// spelled out, there is room for it.
+	assert.equal(groupStatus(route, undefined), "smart → opencode-go");
 	assert.equal(groupStatus(undefined, parseGroupShow(SHOW)), "smart 2 models");
 	assert.equal(groupStatus(undefined, undefined), undefined);
+});
+
+// A group whose members ask for different models, answered by a long-named one.
+const MIXED_ROUTE = JSON.stringify({
+	time: "2026-09-30T10:00:00+08:00",
+	model: "group/multi",
+	provider: "antigravity",
+	group: {
+		id: "multi",
+		routing: "order",
+		members: ["antigravity/gemini-3.8-flash", "openai-proxy/gpt-6-luna"],
+	},
+	tries: [{ id: "antigravity", model: "gemini-3.8-flash", millis: 900 }],
+	served: "gemini-3.8-flash",
+});
+
+test("groupStatus: provider alone for one model, provider and model for several", () => {
+	assert.equal(groupStatus(parseRoute(MIXED_ROUTE), undefined), "order → ant..ity/gemini-3.8-flash");
+});
+
+test("groupStatus: the provider magpie does not name comes from the members", () => {
+	const route = parseRoute(
+		JSON.stringify({
+			model: "group/solo",
+			group: { id: "solo", routing: "smart", members: ["opencode-go/mimo-v2.6-flash"] },
+			served: "mimo-v2.6-flash",
+		}),
+	);
+	assert.equal(groupStatus(route, undefined), "smart → opencode-go");
+	// No provider anywhere and members that differ: only the model is known.
+	const blind = parseRoute(
+		JSON.stringify({ model: "group/two", served: "gpt-6-luna", group: { id: "two", members: ["a/x", "b/y"] } }),
+	);
+	assert.equal(groupStatus(blind, undefined), "→ gpt-6-luna");
+});
+
+test("abbrevProvider: eight columns, cut in the middle", () => {
+	assert.equal(abbrevProvider("xiaomi"), "xiaomi");
+	assert.equal(abbrevProvider("antigravity"), "ant..ity");
+	assert.equal(abbrevProvider("anthropic"), "ant..pic");
+	assert.equal(abbrevProvider("opencode-go"), "ope..go");
+	assert.equal(abbrevProvider("abcdefghijkl"), "abc..jkl");
 });
 
 test("routeClock and weighedText read a route for people", () => {

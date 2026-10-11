@@ -7,7 +7,7 @@
 | Provider | `magpie` |
 | Login | `/login magpie` — endpoint (default `http://127.0.0.1:3425`) and API key (default `magpie`, which a loopback gateway accepts) |
 | Commands | `/magpie`, `/magpie quota [model]`, `/magpie group [id]`, `/magpie groups`, `/magpie refresh`, `/magpie endpoint`, `/magpie help` — all of them complete on Tab |
-| Status bar | `magpie Codex · 14% · 3d`, `magpie smart → xiaomi/mimo-v2.6-flash` |
+| Status bar | `magpie Codex · 14% · 3d`, `magpie smart → opencode-go`, `magpie order → ant..ity/gemini-3.8-flash` |
 | Credential | pi's `auth.json`: `{"type":"api_key","key":"…","env":{"MAGPIE_GW_URL":"http://127.0.0.1:3425"}}` |
 
 ## What it does
@@ -36,9 +36,12 @@ it:
   `magpie 14% left · reset 3d`, cut to `mag 14% · 3d` when there is no room
   (40 columns are always left for the other extensions' statuses, and a
   resize repaints the line at the new width). For a routing
-  group, its routing strategy and the member that answered last
-  (`smart → xiaomi/mimo-v2.6-flash`). Leaving `magpie` for another provider
-  clears it.
+  group, its routing strategy and the provider that answered last — just the
+  provider, spelled out, while every member is one model, the model carrying
+  no news (`smart → opencode-go`), provider and model when the members
+  differ (`order → ant..ity/gemini-3.8-flash`), a provider id over 8
+  characters cut in the middle only there (`antigravity` → `ant..ity`).
+  Leaving `magpie` for another provider clears it.
 - **No protocol code.** Requests are handed to pi-ai's built-in
   `openai-completions`, `openai-responses` and `anthropic-messages`
   implementations, so message conversion, tool calls, usage accounting,
