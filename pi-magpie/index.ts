@@ -74,7 +74,7 @@ export default function (pi: ExtensionAPI): void {
 
 	let cache: { key: string; at: number; render: StatusRender } | undefined;
 	let generation = 0;
-	/** The context the current status was set from, so a resize can repaint it. */
+	/** The context the current status was set from, so a resize can repaint it. Released at session_shutdown. */
 	let statusCtx: ExtensionContext | undefined;
 
 	const refreshStatus = async (ctx: ExtensionContext, force = false): Promise<void> => {
@@ -105,16 +105,33 @@ export default function (pi: ExtensionAPI): void {
 
 	// setStatus takes a fixed string, so the width-aware tiers are chosen when it
 	// is set: repaint the cached reading at the terminal's new width.
-	process.stdout.on("resize", () => {
+	const repaintOnResize = (): void => {
 		const ctx = statusCtx;
 		const render = cache?.render;
 		if (!ctx?.hasUI || !render) return;
 		ctx.ui.setStatus(STATUS_KEY, render());
-	});
+	};
 
 	pi.on("session_start", async (event, ctx) => {
+		// Re-arm per session: a replacement or reload runs a fresh factory while
+		// the previous runtime's listener must be gone (off-then-on keeps this
+		// idempotent if session_start ever fires twice without a shutdown).
+		process.stdout.off("resize", repaintOnResize);
+		process.stdout.on("resize", repaintOnResize);
 		if (event.reason === "startup") await warnIfModelsJsonHandlesMagpie(ctx);
 		await refreshStatus(ctx, true);
+	});
+
+	pi.on("session_shutdown", () => {
+		// pi fires this before it invalidates the ctx, and the getters of a stale
+		// ctx throw. A raw stream listener is not supervised by pi's event
+		// dispatch, so a resize after this point would crash the whole process:
+		// release the listener and the captured ctx, bump the generation so a
+		// refreshStatus still awaiting the gateway returns instead of touching it.
+		++generation;
+		statusCtx = undefined;
+		cache = undefined;
+		process.stdout.off("resize", repaintOnResize);
 	});
 
 	pi.on("model_select", (_event, ctx) => {
