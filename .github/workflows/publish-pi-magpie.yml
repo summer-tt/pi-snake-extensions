@@ -1,0 +1,68 @@
+name: Publish pi-magpie
+
+on:
+  push:
+    tags:
+      - 'pi-magpie@*'
+
+concurrency:
+  group: publish-pi-magpie-${{ github.ref }}
+  cancel-in-progress: true
+
+# Publish only on deliberate version tags for this package — no push-to-master
+# auto-publishing, no GitHub Releases. This is a monorepo: each extension keeps
+# its own release cadence and publishes via its own namespaced tag (e.g.
+# 'pi-magpie@0.1.0'). The tag's version must match package.json before
+# anything runs.
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Trusted publishing (npm OIDC): npm exchanges this OIDC token for a
+      # short-lived publish credential — no NPM_TOKEN secret needed.
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+          cache-dependency-path: 'pi-magpie/package-lock.json'
+
+      - name: Validate tag version matches package.json version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION=$(node -p "require('./pi-magpie/package.json').version")
+          echo "tag=${TAG}"
+          echo "version=${VERSION}"
+          # Tolerate '<pkg>@<ver>' with an optional leading 'v' on <ver>
+          PKG_VER="${TAG#pi-magpie@}"
+          PKG_VER="${PKG_VER#v}"
+          if [ "$PKG_VER" != "$VERSION" ]; then
+            echo "::error::Tag '${TAG}' does not pin package.json version '${VERSION}' (expected 'pi-magpie@${VERSION}')"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: pi-magpie
+
+      - name: Run tests
+        run: npm test
+        working-directory: pi-magpie
+
+      # Trusted publishing requires npm >= 11.5.1 (Node 22 ships npm 10.x)
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@^11.5.1
+
+      # NODE_AUTH_TOKEN must NOT be set: with id-token: write and npm >= 11.5.1,
+      # npm detects the GitHub Actions OIDC environment and authenticates via
+      # the trusted publisher configured on npmjs.com for pi-magpie.
+      - name: Publish to npm
+        run: npm publish
+        working-directory: pi-magpie
