@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] - 2026-10-16
+
+### Fixed
+
+- `Esc` while the countdown is running now only cancels the countdown. It no
+  longer falls through to pi's `app.interrupt` handler, so pressing `Esc` no
+  longer aborts an agent that is mid-run. The key is matched through pi's own
+  keybinding (rebinding works) and passed through untouched whenever no
+  countdown is active.
+
 ## [0.1.2] - 2026-09-23
 
 ### Changed

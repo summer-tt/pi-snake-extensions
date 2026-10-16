@@ -5,6 +5,9 @@
  * Key handling, per the design:
  * - Enter while idle (non-exempt text): start the countdown, text stays put.
  * - Any key while counting down: cancel (text stays — keep editing).
+ * - Escape while counting down: cancel and swallow — it never reaches pi's
+ *   `app.interrupt` handler, so a running agent keeps running (a second
+ *   Escape, now with no countdown active, aborts as usual).
  * - Enter while counting down: ignored until `doubleEnterSeconds` (default
  *   1 s) have elapsed since the first Enter — a deliberate double Enter then
  *   sends immediately; a faster repeat is treated as a bounce and ignored.
@@ -26,6 +29,9 @@ import {
 } from "@earendil-works/pi-tui";
 import { resolveBuiltinCommands } from "./builtins.ts";
 import { DEFAULT_DOUBLE_ENTER_SECONDS } from "./config.ts";
+
+/** pi's interrupt/cancel action id; ESC by default, rebindable by the user. */
+const INTERRUPT_ACTION = "app.interrupt";
 
 /** Same braille frames as pi's own working spinner (pi-tui Loader defaults). */
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -135,6 +141,15 @@ export class ThinkTwiceEditor extends CustomEditor {
 		if (this.countdownActive) {
 			if (isSendNow) {
 				this.finishNow();
+				return;
+			}
+			// Cancel-and-swallow for the interrupt key (ESC by default): the
+			// keybinding is resolved by pi, so rebinding works, and nothing is
+			// re-implemented — only its delivery is blocked for this one press.
+			// With autocomplete open we fall through: stock pi cancels the
+			// suggestion instead of interrupting, and it must keep doing that.
+			if (this.kb.matches(data, INTERRUPT_ACTION) && !this.isShowingAutocomplete()) {
+				this.cancelCountdown();
 				return;
 			}
 			if (isSubmit) {

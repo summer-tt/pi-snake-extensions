@@ -18,6 +18,7 @@ send now.
 | idle | `Enter` | Start the countdown — text stays in the box |
 | idle | `Ctrl+Enter` | Send immediately (skip the countdown) |
 | counting down | any key | Interrupt — text stays, you keep editing |
+| counting down | `Esc` | Cancel the countdown and nothing else — the key is swallowed, so a running agent is *not* aborted |
 | counting down | `Enter` before `doubleEnterSeconds` | Ignored (no send, no restart, no cancel) — a bounce-safe window |
 | counting down | `Enter` after `doubleEnterSeconds` | Send now, countdown finished early |
 | counting down | `Ctrl+Enter` | Send now, countdown finished early |
@@ -108,6 +109,10 @@ Requires Node ≥ 22.6 and pi ≥ 0.80.
   text intact; a rendering fault falls back to the stock border. No failure
   path wedges or crashes pi.
 - Terminal scroll doesn't interrupt the countdown (only key input does).
+- **`Esc` is swallowed only while counting down.** It still resolves through
+  pi's own `app.interrupt` keybinding (so rebinding it works), but during the
+  countdown the key never reaches pi's abort handler; a second `Esc`, with no
+  countdown left to cancel, interrupts as usual.
 
 ## Development
 

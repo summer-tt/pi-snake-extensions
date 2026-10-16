@@ -10,6 +10,7 @@ import { RESERVED_BUILTIN_COMMANDS } from "../builtins.ts";
 
 const ENTER = "\r";
 const CTRL_ENTER = "\x1b[13;5u"; // kitty CSI-u: enter + ctrl
+const ESC = "\x1b";
 
 interface MakeOptions {
 	shouldCountdown?: (text: string, builtinCommands: readonly string[]) => boolean;
@@ -17,6 +18,8 @@ interface MakeOptions {
 	delaySeconds?: number;
 	doubleEnterSeconds?: number;
 	warning?: (text: string) => string;
+	/** Extra keybinding the stub resolves, in addition to tui.input.submit. */
+	interruptKey?: string;
 }
 
 function makeEditor(options?: MakeOptions) {
@@ -32,7 +35,12 @@ function makeEditor(options?: MakeOptions) {
 		},
 	};
 	const keybindings = {
-		matches: (data: string, id: string) => (id === "tui.input.submit" ? data === ENTER : false),
+		matches: (data: string, id: string) =>
+			id === "tui.input.submit"
+				? data === ENTER
+				: id === "app.interrupt"
+					? data === (options?.interruptKey ?? ESC)
+					: false,
 		getKeys: (id: string) => (id === "tui.input.submit" ? ["enter"] : []),
 	};
 	const editor = new ThinkTwiceEditor(tui as never, theme as never, keybindings as never, {
@@ -43,9 +51,12 @@ function makeEditor(options?: MakeOptions) {
 		warning: options?.warning,
 	});
 	const submitted: string[] = [];
+	const interrupted: string[] = [];
 	editor.onSubmit = (text: string) => submitted.push(text);
+	// pi wires app.interrupt to aborting the run; count the deliveries.
+	editor.onAction("app.interrupt", () => interrupted.push("interrupt"));
 	editor.setText("hello");
-	return { editor, submitted };
+	return { editor, submitted, interrupted };
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -104,6 +115,36 @@ test("any other key interrupts the countdown and leaves the text editable", asyn
 	assert.deepEqual(submitted, []);
 	// Text was never sent and the edit landed — user keeps typing.
 	assert.equal(editor.getText(), "helloX");
+});
+
+test("escape during the countdown cancels it and never reaches pi's interrupt handler", async () => {
+	const { editor, submitted, interrupted } = makeEditor({ delaySeconds: 0.25 });
+	editor.handleInput(ENTER);
+	editor.handleInput(ESC);
+	assert.equal((editor as unknown as { countdownTimer?: unknown }).countdownTimer, undefined);
+	assert.deepEqual(interrupted, []); // the running agent keeps running
+	await sleep(400); // past the original deadline
+	assert.deepEqual(submitted, []);
+	assert.equal(editor.getText(), "hello"); // text stays editable
+
+	// The countdown is gone now, so the next escape is stock pi's interrupt.
+	editor.handleInput(ESC);
+	assert.deepEqual(interrupted, ["interrupt"]);
+});
+
+test("escape with no countdown running keeps its stock interrupt behavior", () => {
+	const { editor, interrupted } = makeEditor();
+	editor.handleInput(ESC);
+	assert.deepEqual(interrupted, ["interrupt"]);
+});
+
+test("a rebound interrupt key is swallowed during the countdown too", () => {
+	const CTRL_X = "\x18";
+	const { editor, interrupted } = makeEditor({ delaySeconds: 5, interruptKey: CTRL_X });
+	editor.handleInput(ENTER);
+	editor.handleInput(CTRL_X);
+	assert.equal((editor as unknown as { countdownTimer?: unknown }).countdownTimer, undefined);
+	assert.deepEqual(interrupted, []);
 });
 
 test("exempt submissions go through immediately", () => {
