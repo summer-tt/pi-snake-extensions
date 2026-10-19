@@ -1,0 +1,60 @@
+{
+	"name": "pi-herdr-enhanced",
+	"version": "0.1.0",
+	"description": "Job dispatch and a Job watch for the pi coding agent on top of the herdr CLI \u2014 open a bounded Job anywhere, then sleep until one stops working.",
+	"keywords": [
+		"pi",
+		"pi-package",
+		"pi-extension",
+		"herdr",
+		"job",
+		"dispatch",
+		"watch",
+		"orchestration",
+		"worktree"
+	],
+	"homepage": "https://github.com/tinysnake/pi-snake-extensions#readme",
+	"bugs": {
+		"url": "https://github.com/tinysnake/pi-snake-extensions/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/tinysnake/pi-snake-extensions.git",
+		"directory": "pi-herdr-enhanced"
+	},
+	"license": "MIT",
+	"author": "SNAKE (https://github.com/tinysnake)",
+	"type": "module",
+	"main": "./index.ts",
+	"files": [
+		"*.ts",
+		"src/*.ts",
+		"README.md",
+		"CHANGELOG.md",
+		"PLAN.md",
+		"!tests/"
+	],
+	"scripts": {
+		"test": "node --test --test-timeout=60000 tests/*.test.ts",
+		"test:e2e": "node --test --test-timeout=900000 --test-concurrency=1 tests/e2e/*.e2e.ts",
+		"typecheck": "tsc --noEmit"
+	},
+	"pi": {
+		"extensions": [
+			"./index.ts"
+		]
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "*"
+	},
+	"engines": {
+		"node": ">=22.6"
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"dependencies": {
+		"@types/node": "^24.19.2",
+		"typescript": "^5.9.3"
+	}
+}

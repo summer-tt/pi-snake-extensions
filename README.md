@@ -27,6 +27,12 @@ live model list, quotas and routing groups instead of a frozen `models.json`.
 `/login magpie`, then `/magpie`, `/magpie quota`, `/magpie group`,
 `/magpie groups`.
 
+### pi-herdr-enhanced
+
+Job dispatch and a Job watch on top of the `herdr` CLI — open a bounded Job (a
+tab, or an isolated branch worktree), go idle, and get woken the moment it stops
+working. Two tools: `job` and `job_watch`.
+
 ## Install
 
 ```bash
