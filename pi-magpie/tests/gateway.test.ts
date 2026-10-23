@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isLoopback, normalizeRoot, modelsUrl, quotasUrl } from "../gateway.ts";
+import { isLoopback, normalizeRoot, modelsUrl, quotasUrl, traceUrl } from "../gateway.ts";
 
 test("normalizeRoot: a scheme is assumed, /v1 and trailing slashes dropped", () => {
 	assert.equal(normalizeRoot("http://127.0.0.1:3425"), "http://127.0.0.1:3425");
@@ -34,4 +34,15 @@ test("isLoopback: only this machine's gateway has quotas and routing history", (
 test("endpoint URLs hang off the root", () => {
 	assert.equal(modelsUrl("http://127.0.0.1:3425"), "http://127.0.0.1:3425/v1/models");
 	assert.equal(quotasUrl("http://127.0.0.1:3425"), "http://127.0.0.1:3425/v1/magpie/quotas");
+});
+
+test("the quota URL asks for magpie's own reading, or the vendors'", () => {
+	const root = "http://127.0.0.1:3425";
+	assert.equal(quotasUrl(root), `${root}/v1/magpie/quotas`, "a plain read asks the vendors");
+	assert.equal(quotasUrl(root, true), `${root}/v1/magpie/quotas?kept=1`, "kept asks none");
+	assert.equal(quotasUrl(root, false), `${root}/v1/magpie/quotas`);
+});
+
+test("the routing trace hangs off the root too", () => {
+	assert.equal(traceUrl("http://127.0.0.1:3425"), "http://127.0.0.1:3425/v1/magpie/trace");
 });

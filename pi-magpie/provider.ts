@@ -35,7 +35,7 @@ import {
 	type PiMagpieModel,
 	toPiModels,
 } from "./catalog.ts";
-import { DEFAULT_TOKEN, GROUP_PREFIX, PROVIDER_ID, PROVIDER_NAME, ROOT_ENV } from "./constants.ts";
+import { DEFAULT_TOKEN, PROVIDER_ID, PROVIDER_NAME, ROOT_ENV } from "./constants.ts";
 import {
 	defaultRoot,
 	fetchCatalog,
@@ -198,10 +198,14 @@ export function createMagpieProvider(): MagpieProviderHandle {
 
 	return {
 		provider,
+		/**
+		 * The provider a model's id names, with no guess about routing groups: a
+		 * group is not a provider, and which model is a group is magpie's answer
+		 * (`magpie groups`, the routing trace), not a prefix's.
+		 */
 		ownedBy: (modelId: string): string | undefined => {
 			const known = owners.get(modelId);
 			if (known) return known;
-			if (modelId.startsWith(GROUP_PREFIX)) return undefined;
 			const slash = modelId.indexOf("/");
 			return slash > 0 ? modelId.slice(0, slash) : undefined;
 		},

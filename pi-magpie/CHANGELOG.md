@@ -2,6 +2,37 @@
 
 All notable changes to pi-magpie.
 
+## 0.1.6
+
+- The footer follows the gateway by itself: it is re-read after every run
+  (`agent_end`), on a model switch and at session start, so a long session no
+  longer shows the quota and the routed provider it saw at the beginning.
+- Those reads ask magpie for what it already read
+  (`GET /v1/magpie/quotas?kept=1`), as magpie's own status line does, so the
+  footer never makes magpie read a vendor's usage endpoint — a plain read does,
+  whenever magpie's minute of cache is up. Only a reading magpie has let go
+  stale (15 minutes, `STALE_READING_MS`) is read again with the vendors asked,
+  at most once in that window; `/magpie quota` and `/magpie refresh` still ask
+  straight away.
+- A routing group is now magpie's answer rather than an id prefix's:
+  `magpie groups` lists every group (a made one's `group/<id>`, a found one's
+  `auto/<model>`, which this held for neither before), read in the background
+  at session start so the first paint is not held up by its few seconds, and
+  the gateway's routing trace identifies a group that list cannot name. So
+  `/magpie`, `/magpie group`, `/magpie groups` and the Tab completions now know
+  found groups too, and a model magpie routes is never mistaken for a provider
+  named `auto`.
+- A routing group's footer line comes from the gateway's live routing trace
+  (`GET /v1/magpie/trace`) instead of `magpie group <id>` plus the routing
+  history: no subprocess, no file to tail, and the line moves with the
+  request that just finished. The history on disk is still the fallback, and
+  `$MAGPIE_BIN` is no longer run for the footer at all.
+- A refresh that fails once keeps the reading the footer already shows; two
+  failures in a row say `magpie unreachable`. An unchanged reading is not
+  written again, so a refresh no longer repaints the footer for nothing.
+- Quotas and routing are this machine's: a gateway on another machine now shows
+  the model alone in the footer instead of the local machine's routing history.
+
 ## 0.1.5
 
 - Works out of the box: with nothing configured, the provider answers from

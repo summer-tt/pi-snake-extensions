@@ -8,17 +8,23 @@
  */
 
 const root = (process.argv[2] ?? process.env.MAGPIE_GW_URL ?? "http://127.0.0.1:3425").replace(/\/+$/, "");
-const wanted = process.argv[3] ?? "group/auto-mimo-v2-6-flash";
+const wanted = process.argv[3] ?? "";
 
 const extension = (await import("../index.ts")).default;
 
 let handler;
+let completions = null;
+const started = [];
 const registered = [];
 extension({
 	registerProvider: (provider) => registered.push(provider.id),
-	on: () => () => {},
+	on: (event, callback) => {
+		if (event === "session_start") started.push(callback);
+		return () => {};
+	},
 	registerCommand: (_name, command) => {
 		handler = command.handler;
+		completions = command.getArgumentCompletions;
 	},
 });
 if (!handler) throw new Error("the extension registered no /magpie command");
@@ -26,7 +32,16 @@ if (!handler) throw new Error("the extension registered no /magpie command");
 const { toPiModels } = await import("../catalog.ts");
 const { fetchCatalog } = await import("../gateway.ts");
 const models = toPiModels(await fetchCatalog(root, "magpie", AbortSignal.timeout(8_000)), root);
-const model = models.find((entry) => entry.id === wanted) ?? models[0];
+// The first routing group magpie serves, which is what the footer and the
+// reports have most to say about.
+const { runMagpie } = await import("../gateway.ts");
+const { parseGroupsList, shortGroupId } = await import("../routing.ts");
+const listed = await runMagpie(["groups"]);
+const groupIds = new Set(listed.ok ? parseGroupsList(listed.stdout).map((row) => shortGroupId(row.id)) : []);
+const model =
+	models.find((entry) => entry.id === wanted) ??
+	models.find((entry) => groupIds.has(shortGroupId(entry.id))) ??
+	models[0];
 
 const ctx = {
 	hasUI: true,
@@ -47,18 +62,21 @@ const ctx = {
 	},
 };
 
+// The session start is what learns magpie's routing groups, as in pi.
+for (const callback of started) await callback({ type: "session_start", reason: "resume" }, ctx);
+
 console.log(`registered provider: ${registered.join(", ")}\ncurrent model:       ${model?.id ?? "none"}\n`);
-for (const args of ["", "quota", `quota ${wanted}`, `group`, "groups", "endpoint", "refresh", "help", "bogus"]) {
+for (const args of ["", "quota", `quota ${model.id}`, `group`, "groups", "endpoint", "refresh", "help", "bogus"]) {
 	console.log(`── /magpie ${args}`.trimEnd());
 	await handler(args, ctx);
 	console.log();
 }
 
 const { argumentCompletions } = await import("../usage.ts");
-const completions = { models: () => models };
+const source = { models: () => models, groups: () => groupIds };
 console.log("── Tab completion");
 for (const prefix of ["", "g", "gr", "quota ", "quota mimo", "group ", "groups ", "refresh ", "nope"]) {
-	const items = argumentCompletions(prefix, completions);
+	const items = argumentCompletions(prefix, source);
 	const shown = items?.slice(0, 6).map((item) => item.label).join(" | ") ?? "(nothing)";
 	const more = items && items.length > 6 ? ` | +${items.length - 6}` : "";
 	console.log(`  /magpie ${prefix}`.padEnd(22) + `→ ${shown}${more}`);

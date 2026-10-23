@@ -46,7 +46,8 @@ one.
 - **The footer tells you what's actually serving you.** On a model, its
   tightest quota window (`magpie 14% left · reset 3d`); on a routing group,
   the strategy and the provider that answered last (`smart → opencode-go`).
-  It follows the terminal's width and repaints on resize.
+  It follows the terminal's width and repaints on resize, and it follows the
+  gateway by itself — after every run, not on a clock.
 - **No protocol code.** Requests are handed to pi-ai's built-in
   `openai-completions`, `openai-responses` and `anthropic-messages`
   implementations, so message conversion, tool calls, usage accounting,
@@ -75,6 +76,22 @@ magpie order → ant..ity/gemini-3.8-flash
 
 Leaving `magpie` for another provider clears the line.
 
+Which models are routing groups is magpie's answer, not a prefix's: `magpie
+groups` lists them all — a group you made as `group/<id>`, a group magpie found
+as `auto/<model>` — and the gateway's routing trace says what a group the list
+does not name (a magpie without its CLI on `PATH`) last did. Both are read here,
+so `/magpie groups` and the Tab completions list found groups too.
+
+Watching the footer costs magpie's vendors nothing. The line is re-read after
+every run, on a model switch and at session start, and each of those reads asks
+magpie for what it **already read** (`GET /v1/magpie/quotas?kept=1`) — the same
+reading magpie's own status line uses, so no vendor's usage endpoint is hit.
+Only a reading magpie has let go stale (15 minutes) is read again with the
+vendors asked, at most once in that window; `/magpie quota` and `/magpie
+refresh` ask straight away. A group's last request comes from the gateway's
+live routing trace (`GET /v1/magpie/trace`, this machine only), so it shows the
+request that just finished rather than a file's tail.
+
 ## Commands
 
 | | |
@@ -102,15 +119,15 @@ rule and last answered member.
 | Reading | Source |
 | --- | --- |
 | Models | `GET {root}/v1/models` |
-| Quotas | `GET {root}/v1/magpie/quotas` — magpie answers this to loopback only |
+| Quotas | `GET {root}/v1/magpie/quotas?kept=1` — what magpie already read; a plain read asks the vendors, and magpie answers it to loopback only |
+| Which models are groups | `magpie groups` (`$MAGPIE_BIN`, else `magpie` on `PATH`), else the routing trace |
 | A group's definition | `magpie group <id>` (`$MAGPIE_BIN`, else `magpie` on `PATH`) |
-| A group's last request | magpie's routing history, `~/.config/magpie/routing/<day>.jsonl` |
+| A group's last request | the gateway's live routing trace, `GET {root}/v1/magpie/trace`; else magpie's routing history, `~/.config/magpie/routing/<day>.jsonl` |
 
-The two readings magpie tells only this machine — quotas and the routing
-history — are skipped for a remote endpoint; the model list and the requests
-themselves work either way. The history is read from its tail, and the last
-decision is looked up per group in one pass, so a footer refresh doesn't
-re-read a day's file.
+The readings magpie tells only this machine — quotas, the routing trace and
+the routing history — are skipped for a remote endpoint; the model list and the
+requests themselves work either way. The trace is the gateway's own memory of
+its last 60 requests, so a footer refresh reads no file at all.
 
 ## The `models.json` warning
 
@@ -129,11 +146,13 @@ The extension reports the conflict once at startup.
   footer cost of a magpie session isn't meaningful; usage tokens are.
 - A routing group is a normal model id (`group/<id>`) — magpie does the
   routing, and pi sees one model.
-- `MAGPIE_BIN` points the group readings at another magpie binary; without
-  the CLI, a group still shows its id, its members from the catalog, and its
-  last request from the routing history.
-- Quotas and the routing history are loopback-only, so a remote gateway shows
-  the model list and routes requests but reports neither.
+- `MAGPIE_BIN` points `/magpie group` and `/magpie groups` at another magpie
+  binary. The footer needs no CLI to show a group's last request (the gateway's
+  trace has it), but without the CLI it can only tell a group that has taken a
+  request: an unused one shows as a model.
+- Quotas, the routing trace and the routing history are this machine's alone,
+  so a remote gateway shows the model list and routes requests but reports
+  neither.
 
 ## Install
 

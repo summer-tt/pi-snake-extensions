@@ -5,6 +5,7 @@ import {
 	describeRoute,
 	groupStatus,
 	latestGroupRoute,
+	latestGroupRouteIn,
 	latestRoutesByGroup,
 	parseGroupsList,
 	parseGroupShow,
@@ -12,6 +13,8 @@ import {
 	routeClock,
 	splitMembers,
 	stripAnsi,
+	traceToRoute,
+	routeMatchesGroup,
 	weighedText,
 } from "../routing.ts";
 
@@ -251,4 +254,121 @@ test("routeClock and weighedText read a route for people", () => {
 	assert.equal(weighedText({ provider: "codex", used: 0 }), "codex, 0% used");
 	assert.equal(weighedText({ name: "Codex" }), "Codex");
 	assert.equal(weighedText({}), "?");
+});
+
+// One route as `GET /v1/magpie/trace` answers it (captured live).
+const TRACE = [
+	{
+		time: "2026-10-23T16:10:48.708412+08:00",
+		agent: "pi",
+		model: "group/auto-deepseek-v4-1-flash",
+		provider: "qoder-cn",
+		group: {
+			id: "auto-deepseek-v4-1-flash",
+			ref: "auto/deepseek-v4.1-flash",
+			routing: "order",
+			members: ["qoder-cn/dfmodel", "opencode-go/deepseek-v4.1-flash"],
+		},
+		served: "deepseek-v4.1-flash",
+		tries: [{ id: "opencode-go", model: "deepseek-v4.1-flash", status: 200, ms: 6524 }],
+	},
+	{
+		time: "2026-10-23T16:11:01.691134+08:00",
+		model: "codex/gpt-6.1-sol",
+		provider: "codex",
+		served: "gpt-6.1-sol",
+		tries: [{ id: "codex", model: "gpt-6.1-sol", status: 200, ms: 8747 }],
+	},
+	{
+		time: "2026-10-23T16:12:30.000000+08:00",
+		model: "group/auto-deepseek-v4-1-flash",
+		provider: "workbuddy",
+		group: {
+			id: "auto-deepseek-v4-1-flash",
+			ref: "auto/deepseek-v4.1-flash",
+			routing: "order",
+			members: ["qoder-cn/dfmodel", "workbuddy/deepseek-v4.1-flash"],
+		},
+		served: "deepseek-v4.1-flash",
+		tries: [{ id: "workbuddy", model: "deepseek-v4.1-flash", status: 200, ms: 8000 }],
+	},
+];
+
+test("traceToRoute: a trace's ms is the history's millis, the rest carries over", () => {
+	const route = traceToRoute(TRACE[0]);
+	assert.equal(route.model, "group/auto-deepseek-v4-1-flash");
+	assert.equal(route.provider, "qoder-cn");
+	assert.equal(route.served, "deepseek-v4.1-flash");
+	assert.deepEqual(route.group, TRACE[0].group);
+	assert.deepEqual(route.tries, [
+		{ id: "opencode-go", model: "deepseek-v4.1-flash", effort: undefined, status: 200, fail: undefined, error: undefined, millis: 6524 },
+	]);
+	assert.deepEqual(traceToRoute({}).tries, []);
+});
+
+test("latestGroupRouteIn: the last request through that group, either spelling", () => {
+	// The second group route, not the first, and not the model route after it.
+	assert.equal(latestGroupRouteIn(TRACE, "auto-deepseek-v4-1-flash")?.provider, "workbuddy");
+	assert.equal(latestGroupRouteIn(TRACE, "group/auto-deepseek-v4-1-flash")?.provider, "workbuddy");
+	assert.equal(latestGroupRouteIn(TRACE, "someone-else"), undefined);
+	assert.equal(latestGroupRouteIn([], "auto-deepseek-v4-1-flash"), undefined);
+});
+
+test("a trace route reads in the footer exactly as the history's does", () => {
+	assert.equal(groupStatus(latestGroupRouteIn(TRACE, "auto-deepseek-v4-1-flash"), undefined), "order → wor..ddy/deepseek-v4.1-flash");
+});
+
+// Captured from `magpie groups`: a found group's public id is auto/<model>, a
+// made one's group/<id>.
+const GROUPS = `  DeepSeek V4.1 Flash  auto/deepseek-v4.1-flash  order   qoder-cn/dfmodel → opencode-go/deepseek-v4.1-flash  ← Pi
+  step-5-preview       group/step-5-preview       smart   opencode-go/step-5-preview-free · workbuddy/step-5-preview
+`;
+
+test("parseGroupsList: found groups are listed by auto/<model>, made ones by group/<id>", () => {
+	const rows = parseGroupsList(GROUPS);
+	assert.deepEqual(
+		rows.map((row) => row.id),
+		["auto/deepseek-v4.1-flash", "group/step-5-preview"],
+	);
+	assert.equal(rows[0]?.routing, "order");
+	assert.equal(rows[0]?.usedBy, "Pi");
+	assert.deepEqual(rows[0]?.members, ["qoder-cn/dfmodel", "opencode-go/deepseek-v4.1-flash"]);
+	assert.equal(rows[1]?.name, "step-5-preview");
+	assert.equal(rows[1]?.routing, "smart");
+});
+
+// Captured from `magpie group auto/deepseek-v4.1-flash`.
+const AUTO_SHOW = `  DeepSeek V4.1 Flash  auto/deepseek-v4.1-flash
+  routing   order
+  stays     auto
+  models    1 qoder-cn/dfmodel  Qoder CN · DeepSeek-Flash
+            2 opencode-go/deepseek-v4.1-flash  OpenCode Go · DeepSeek V4.1 Flash
+  used by   Pi
+`;
+
+test("parseGroupShow: a found group's header carries its auto/<model> id", () => {
+	const info = parseGroupShow(AUTO_SHOW);
+	assert.equal(info?.id, "auto/deepseek-v4.1-flash");
+	assert.equal(info?.name, "DeepSeek V4.1 Flash");
+	assert.equal(info?.routing, "order");
+	assert.equal(info?.usedBy, "Pi");
+	assert.deepEqual(info?.members, ["qoder-cn/dfmodel", "opencode-go/deepseek-v4.1-flash"]);
+});
+
+test("a route is named by its group's catalog id, its kept id, or its model", () => {
+	const route = parseRoute(JSON.stringify(TRACE[0]))!;
+	// The catalog's id, the id magpie keeps, and group/<kept id>.
+	assert.equal(routeMatchesGroup(route, "auto/deepseek-v4.1-flash"), true);
+	assert.equal(routeMatchesGroup(route, "auto-deepseek-v4-1-flash"), true);
+	assert.equal(routeMatchesGroup(route, "group/auto-deepseek-v4-1-flash"), true);
+	assert.equal(routeMatchesGroup(route, "step-5-preview"), false);
+	assert.equal(routeMatchesGroup(route, ""), false);
+});
+
+test("the history and the trace find a group by any of its ids", () => {
+	const history = `${JSON.stringify(TRACE[0])}\n${JSON.stringify(TRACE[2])}\n`;
+	assert.equal(latestGroupRoute(history, "auto/deepseek-v4.1-flash")?.provider, "workbuddy");
+	assert.equal(latestGroupRoute(history, "group/auto-deepseek-v4-1-flash")?.provider, "workbuddy");
+	assert.equal(latestGroupRoute(history, "nothing"), undefined);
+	assert.equal(latestGroupRouteIn(TRACE, "auto/deepseek-v4.1-flash")?.provider, "workbuddy");
 });

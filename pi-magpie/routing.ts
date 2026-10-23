@@ -3,9 +3,11 @@
  * last request through it actually went.
  *
  * The definitions come from `magpie group <id>` (magpie's own public reading of
- * a group) and the last decision from magpie's routing history, one JSON object
- * per completed request, written by the gateway under
- * `~/.config/magpie/routing/<day>.jsonl` (internal/gateway/trace.go).
+ * a group) and the last decision from the gateway's live routing trace
+ * (`GET /v1/magpie/trace`, this machine only) or, when that cannot answer,
+ * from magpie's routing history: one JSON object per completed request, written
+ * by the gateway under `~/.config/magpie/routing/<day>.jsonl`
+ * (internal/gateway/trace.go).
  */
 
 /** A routing group as `magpie group <id>` describes it. */
@@ -73,6 +75,8 @@ export interface RouteTry {
 /** The group a request asked for (gateway trace.go, GroupRef). */
 export interface RouteGroup {
 	id?: string;
+	/** The id magpie's catalog gives it: `group/<id>`, or a found group's `auto/<model>`. */
+	ref?: string;
 	name?: string;
 	routing?: string;
 	affinity?: string;
@@ -110,6 +114,39 @@ export interface Route {
 	tokens?: number;
 }
 
+/**
+ * One try as the live routing trace tells it (gateway trace.go, Try): the same
+ * attempt as the history's, timed in `ms` rather than `millis`.
+ */
+export interface TraceTry {
+	id?: string;
+	model?: string;
+	effort?: string;
+	status?: number;
+	fail?: string;
+	error?: string;
+	ms?: number;
+}
+
+/**
+ * One request as `GET /v1/magpie/trace` tells it: the decision the gateway
+ * holds in memory, which is what the footer reads — no file to tail, no CLI to
+ * run, and the last route changes the moment a request completes.
+ */
+export interface TraceRoute {
+	time?: string;
+	agent?: string;
+	model?: string;
+	provider?: string;
+	group?: RouteGroup;
+	affinity?: RouteAffinity;
+	served?: string;
+	status?: number;
+	error?: string;
+	tokens?: number;
+	tries?: TraceTry[];
+}
+
 // =============================================================================
 // magpie CLI output
 // =============================================================================
@@ -124,6 +161,15 @@ export function stripAnsi(text: string): string {
 
 /** Two or more spaces: magpie's column separator. */
 const COLUMN = /\s{2,}/;
+
+/**
+ * A group's id as magpie lists it: `group/<id>` for one the user made, and
+ * `auto/<model>` for one magpie found — the model's own id after the slash, so
+ * a client reading it as a model id knows the model
+ * (internal/provider/autoref.go).
+ */
+const GROUP_REF = "(?:group/[a-z0-9][a-z0-9-]*|auto/[^\\s]+)";
+const GROUP_REF_LINE = new RegExp(`^${GROUP_REF}$`);
 
 /**
  * A field of `magpie group <id>`: two spaces, a key padded to nine columns, a
@@ -144,7 +190,7 @@ export function parseGroupShow(text: string): GroupInfo | undefined {
 	for (const raw of stripAnsi(text).split(/\r?\n/)) {
 		const line = raw.replace(/\s+$/, "");
 		if (!line.trim()) continue;
-		const header = /^\s+(.*?)\s{2,}(group\/[a-z0-9][a-z0-9-]*)\b(.*)$/.exec(line);
+		const header = new RegExp(`^\\s+(.*?)\\s{2,}(${GROUP_REF})(.*)$`).exec(line);
 		if (header && !info.id) {
 			info.id = header[2];
 			info.name = header[1].replace(/\s+found$/, "").trim();
@@ -217,7 +263,7 @@ export function parseGroupsList(text: string): GroupListRow[] {
 		const line = raw.trim();
 		if (!line) continue;
 		const columns = line.split(COLUMN);
-		const idIndex = columns.findIndex((column) => /^group\/[a-z0-9][a-z0-9-]*$/.test(column.trim()));
+		const idIndex = columns.findIndex((column) => GROUP_REF_LINE.test(column.trim()));
 		if (idIndex < 0) continue;
 		const row: GroupListRow = {
 			id: columns[idIndex].trim(),
@@ -277,12 +323,36 @@ export function parseRoute(line: string): Route | undefined {
 
 /** The latest route a group took, newest line first, either spelling of its id. */
 export function latestGroupRoute(text: string, groupId: string): Route | undefined {
-	return latestRoute(text, `group/${shortGroupId(groupId)}`) ?? latestRoute(text, shortGroupId(groupId));
+	const lines = text.split(/\r?\n/);
+	for (let index = lines.length - 1; index >= 0; index--) {
+		const route = parseRoute(lines[index] ?? "");
+		if (route && routeMatchesGroup(route, groupId)) return route;
+	}
+	return undefined;
 }
 
 /** `group/relay` and `relay` name the same group. */
 export function shortGroupId(id: string): string {
 	return id.replace(/^group\//, "");
+}
+
+/**
+ * The ids a route names its group by: the catalog's own (`auto/<model>` or
+ * `group/<id>`), the id magpie keeps inside (`auto-<slug>` or `<id>`), and
+ * `group/<id>`. Whichever an agent sent, one of them is the model's id.
+ */
+function groupNames(route: Route): string[] {
+	const names: string[] = [];
+	if (route.group?.ref) names.push(shortGroupId(route.group.ref));
+	if (route.group?.id) names.push(shortGroupId(route.group.id));
+	if (route.model) names.push(shortGroupId(route.model));
+	return names;
+}
+
+/** Whether a route went through the group this id names, however it is spelt. */
+export function routeMatchesGroup(route: Route, groupId: string): boolean {
+	const wanted = shortGroupId(groupId);
+	return wanted !== "" && groupNames(route).includes(wanted);
 }
 
 /** The latest route of each group, by group id: the whole day in one pass. */
@@ -297,7 +367,7 @@ export function latestRoutesByGroup(text: string): Map<string, Route> {
 	return routes;
 }
 
-/** The last route of any kind through one model id. */
+/** The latest route of any kind through one model id. */
 export function latestRoute(text: string, modelId: string): Route | undefined {
 	const lines = text.split(/\r?\n/);
 	for (let index = lines.length - 1; index >= 0; index--) {
@@ -305,6 +375,46 @@ export function latestRoute(text: string, modelId: string): Route | undefined {
 		if (route && (route.model === modelId || route.group?.id === modelId)) return route;
 	}
 	return undefined;
+}
+
+// =============================================================================
+// The live trace
+// =============================================================================
+
+/** A trace route as the routing history's route, so one reading serves both. */
+export function traceToRoute(route: TraceRoute): Route {
+	return {
+		time: route.time,
+		agent: route.agent,
+		model: route.model,
+		provider: route.provider,
+		group: route.group,
+		affinity: route.affinity,
+		served: route.served,
+		status: route.status,
+		error: route.error,
+		tokens: route.tokens,
+		tries: (route.tries ?? []).map((attempt) => ({
+			id: attempt.id,
+			model: attempt.model,
+			effort: attempt.effort,
+			status: attempt.status,
+			fail: attempt.fail,
+			error: attempt.error,
+			millis: attempt.ms,
+		})),
+	};
+}
+
+/** The latest route through a group in a trace, oldest first as the trace tells it. */
+export function latestGroupRouteIn(routes: readonly TraceRoute[], groupId: string): Route | undefined {
+	const wanted = shortGroupId(groupId);
+	if (!wanted) return undefined;
+	let latest: TraceRoute | undefined;
+	for (const route of routes) {
+		if (routeMatchesGroup(route, wanted)) latest = route;
+	}
+	return latest ? traceToRoute(latest) : undefined;
 }
 
 /** A route's time as a clock, for the header line. */

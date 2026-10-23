@@ -4,7 +4,7 @@
  * be documented in one of them and missing from another.
  */
 
-import { GROUP_PREFIX } from "./constants.ts";
+import { shortGroupId } from "./routing.ts";
 
 export interface MagpieSubcommand {
 	/** The word typed after `/magpie`. */
@@ -53,9 +53,11 @@ export interface CompletionItem {
 	description?: string;
 }
 
-/** What completions need to know: the models this extension has installed. */
+/** What completions need to know: the models this extension has installed, and which of them magpie routes. */
 export interface CompletionSource {
 	models(): readonly { id: string; name: string }[];
+	/** The routing groups' ids, as `magpie groups` names them. */
+	groups(): ReadonlySet<string>;
 }
 
 /**
@@ -126,11 +128,13 @@ export function argumentCompletions(prefix: string, source: CompletionSource): C
 		);
 	}
 	if (name === "group") {
-		const groups = source.models().filter((model) => model.id.startsWith(GROUP_PREFIX));
+		// Which model is a group is magpie's answer, not a prefix's: its own list.
+		const known = source.groups();
+		const groups = source.models().filter((model) => known.has(shortGroupId(model.id)));
 		return itemsOrNull(
 			rank(groups, query, (model) => `${model.id} ${model.name}`).map((model) => {
-				const id = model.id.slice(GROUP_PREFIX.length);
-				return { value: `group ${id}`, label: `${GROUP_PREFIX}${id}`, description: model.name };
+				const id = shortGroupId(model.id);
+				return { value: `group ${id}`, label: id, description: model.name };
 			}),
 		);
 	}

@@ -26,6 +26,10 @@ export interface QuotaEntry {
 	until?: string;
 	resets?: { count?: number; until?: string };
 	error?: string;
+	/** When magpie last read this account, as `?kept=1` answers it. */
+	readAt?: string;
+	/** The cached reading's time, when magpie served one in place of a failed read. */
+	asOf?: string;
 }
 
 /** The quota lines for one model. */
@@ -78,6 +82,21 @@ export function formatReset(resetsAt: string | undefined, now: number): string |
 /** The entries that belong to one magpie provider. */
 export function selectQuotas(entries: readonly QuotaEntry[], provider: string): QuotaEntry[] {
 	return entries.filter((entry) => entry?.provider === provider);
+}
+
+/**
+ * When magpie last read a provider's allowances: the oldest of its cards' own
+ * times, so the stalest card decides. Undefined when no card says — a plan's
+ * card need not carry one.
+ */
+export function readingAt(entries: readonly QuotaEntry[], provider: string): number | undefined {
+	let oldest: number | undefined;
+	for (const entry of selectQuotas(entries, provider)) {
+		const at = Date.parse(entry.readAt ?? entry.asOf ?? "");
+		if (!Number.isFinite(at)) continue;
+		if (oldest === undefined || at < oldest) oldest = at;
+	}
+	return oldest;
 }
 
 /** The window with the least left, then the soonest to reset. */

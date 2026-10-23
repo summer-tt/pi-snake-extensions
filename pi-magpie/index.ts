@@ -15,15 +15,26 @@
  *
  * Every one of those completes on Tab: the subcommands while the first word is
  * typed, then the ids the subcommand takes.
+ *
+ * The footer follows the gateway by itself: it re-reads after every run
+ * (`agent_end`), on a model switch and at session start, and repaints at the
+ * terminal's new width. Those reads ask magpie for what it already read
+ * (`GET /v1/magpie/quotas?kept=1`), so watching the footer never makes magpie
+ * read a vendor; only a reading magpie has let go stale (STALE_READING_MS) is
+ * read again with the vendors asked. A routing group's line comes from the
+ * gateway's live routing trace (`GET /v1/magpie/trace`) and falls back to the
+ * routing history on disk; which models are groups is magpie's own list
+ * (`magpie groups`, in the background), never a prefix's.
  */
 
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai/compat";
-import { DEFAULT_TOKEN, GROUP_PREFIX, PROVIDER_ID, ROOT_ENV, STATUS_KEY, STATUS_TTL_MS } from "./constants.ts";
+import { DEFAULT_TOKEN, PROVIDER_ID, ROOT_ENV, STATUS_KEY, STATUS_TTL_MS, STALE_READING_MS } from "./constants.ts";
 import {
 	defaultRoot,
 	fetchModel,
 	fetchQuotas,
+	fetchTrace,
 	gatewayUrlFor,
 	isLoopback,
 	magpieProviderInModelsJson,
@@ -33,17 +44,19 @@ import {
 	routingDays,
 	runMagpie,
 } from "./gateway.ts";
-import { quotaView, statusForWidth, type QuotaEntry, type StatusForms } from "./quota.ts";
+import { quotaView, readingAt, statusForWidth, type QuotaEntry } from "./quota.ts";
 import {
 	describeRoute,
 	type GroupInfo,
 	groupStatus,
 	type GroupListRow,
 	latestGroupRoute,
+	latestGroupRouteIn,
 	latestRoutesByGroup,
 	parseGroupShow,
 	parseGroupsList,
 	type Route,
+	shortGroupId,
 } from "./routing.ts";
 import { createMagpieProvider, type MagpieProviderHandle, ownedByEntry } from "./provider.ts";
 import { argumentCompletions, findSubcommand, usageLines } from "./usage.ts";
@@ -61,6 +74,24 @@ const STATUS_BUDGET_MARGIN = 40;
 /** What the footer shows for one model, recomputed against the width on a resize. */
 type StatusRender = () => string | undefined;
 
+/** Whether a context can still be used: pi's getters throw once it is stale. */
+function usable(ctx: ExtensionContext): boolean {
+	try {
+		return ctx.hasUI;
+	} catch {
+		return false;
+	}
+}
+
+/** One reading of the gateway: the line, and when the numbers behind it were read. */
+interface StatusReading {
+	render: StatusRender;
+	/** When magpie read the numbers, ms; undefined when the reading doesn't say. */
+	readAt?: number;
+	/** Whether this read asked the vendors, rather than magpie's own cache. */
+	full: boolean;
+}
+
 /** What this extension knows about the gateway right now. */
 interface GatewayAuth {
 	root: string;
@@ -75,44 +106,105 @@ export default function (pi: ExtensionAPI): void {
 	const magpie = createMagpieProvider();
 	pi.registerProvider(magpie.provider);
 
-	let cache: { key: string; at: number; render: StatusRender } | undefined;
+	let cache: { key: string; at: number; reading: StatusReading } | undefined;
+	/** The routing groups magpie serves, by id — whichever spelling it gives them. */
+	let groups = new Set<string>();
 	let generation = 0;
 	/** The context the current status was set from, so a resize can repaint it. Released at session_shutdown. */
 	let statusCtx: ExtensionContext | undefined;
+	/** The text the footer holds, so an unchanged reading does not repaint it. */
+	let written: string | undefined;
+	/** Readings that failed in a row: one is a blip, two in a row is news. */
+	let failures = 0;
+	/** When the vendors were last asked, so one stale reading is read again, not every one. */
+	let lastFullAt = 0;
 
-	const refreshStatus = async (ctx: ExtensionContext, force = false): Promise<void> => {
-		if (!ctx.hasUI) return;
+	/**
+	 * Re-ask what magpie's routing groups are; a magpie without the CLI keeps
+	 * none. Answers whether that changed anything, which is when the footer is
+	 * worth painting again.
+	 */
+	const loadGroups = async (ctx: ExtensionContext): Promise<boolean> => {
+		let next = new Set<string>();
+		try {
+			next = await knownGroupIds(await gatewayAuth(ctx));
+		} catch {
+			next = new Set();
+		}
+		const changed = next.size !== groups.size || [...next].some((id) => !groups.has(id));
+		groups = next;
+		return changed;
+	};
+
+	const writeStatus = (ctx: ExtensionContext, text: string | undefined): void => {
+		// setStatus repaints the footer whatever it says: an unchanged reading is
+		// left alone.
+		if (text === written) return;
+		written = text;
+		ctx.ui.setStatus(STATUS_KEY, text);
+	};
+
+	/**
+	 * Re-read what the footer shows. The default read asks magpie for what it
+	 * already read (`?kept=1`), which asks no vendor at all — cheap enough to do
+	 * whenever the gateway's answer can have changed. `full` asks the vendors
+	 * too, for a reading magpie has let go stale or for a command that says now.
+	 */
+	const refreshStatus = async (
+		ctx: ExtensionContext,
+		options: { force?: boolean; full?: boolean } = {},
+	): Promise<void> => {
+		// A refresh resumed after the session was replaced finds a ctx whose
+		// getters throw: it has nothing left to say.
+		if (!usable(ctx)) return;
 		statusCtx = ctx;
 		const model = ctx.model;
 		if (!model || model.provider !== PROVIDER_ID) {
-			ctx.ui.setStatus(STATUS_KEY, undefined);
+			writeStatus(ctx, undefined);
 			cache = undefined;
 			return;
 		}
+		const { force = false, full = false } = options;
 		const hit = cache;
-		if (!force && hit && hit.key === model.id && Date.now() - hit.at < STATUS_TTL_MS) {
-			ctx.ui.setStatus(STATUS_KEY, hit.render());
+		// A model switch and a run's end can arrive together: a reading taken a
+		// moment ago stands, rather than asking the gateway again for it.
+		if (!force && !full && hit && hit.key === model.id && Date.now() - hit.at < STATUS_TTL_MS) {
+			writeStatus(ctx, hit.reading.render());
 			return;
 		}
 		const mine = ++generation;
-		let render: StatusRender;
+		let reading: StatusReading;
 		try {
-			render = await statusRender(ctx, magpie, model);
+			const auth = await gatewayAuth(ctx);
+			reading = await statusReading(magpie, model, auth, full, groups);
+			failures = 0;
 		} catch {
-			render = () => `${PROVIDER_LABEL} unreachable`;
+			// Keep what the footer already shows: a gateway restarted or one
+			// request timing out is not news. Two failures in a row are.
+			if (cache?.key === model.id && ++failures < 2) return;
+			failures = 0;
+			reading = { render: () => `${PROVIDER_LABEL} unreachable`, full: true };
 		}
 		if (mine !== generation) return;
-		cache = { key: model.id, at: Date.now(), render };
-		ctx.ui.setStatus(STATUS_KEY, render());
+		cache = { key: model.id, at: Date.now(), reading };
+		writeStatus(ctx, reading.render());
+		if (full) {
+			lastFullAt = Date.now();
+		} else if (staleReading(reading, Date.now(), lastFullAt)) {
+			// magpie's cache has not been read for a while (nothing else asked
+			// it: a gateway with no window open): ask it to read once now.
+			lastFullAt = Date.now();
+			void refreshStatus(ctx, { full: true }).catch(() => {});
+		}
 	};
 
 	// setStatus takes a fixed string, so the width-aware tiers are chosen when it
 	// is set: repaint the cached reading at the terminal's new width.
 	const repaintOnResize = (): void => {
 		const ctx = statusCtx;
-		const render = cache?.render;
-		if (!ctx?.hasUI || !render) return;
-		ctx.ui.setStatus(STATUS_KEY, render());
+		const render = cache?.reading.render;
+		if (!ctx || !render || !usable(ctx)) return;
+		writeStatus(ctx, render());
 	};
 
 	pi.on("session_start", async (event, ctx) => {
@@ -121,8 +213,16 @@ export default function (pi: ExtensionAPI): void {
 		// idempotent if session_start ever fires twice without a shutdown).
 		process.stdout.off("resize", repaintOnResize);
 		process.stdout.on("resize", repaintOnResize);
+		written = undefined;
+		failures = 0;
+		lastFullAt = 0;
 		if (event.reason === "startup") await warnIfModelsJsonHandlesMagpie(ctx);
-		await refreshStatus(ctx, true);
+		await refreshStatus(ctx, { force: true });
+		// `magpie groups` takes a moment (it asks the running magpie): the footer
+		// paints from the routing trace first, and paints again when the list lands.
+		void loadGroups(ctx)
+			.then((changed) => (changed ? refreshStatus(ctx, { force: true }) : undefined))
+			.catch(() => {});
 	});
 
 	pi.on("session_shutdown", () => {
@@ -134,24 +234,41 @@ export default function (pi: ExtensionAPI): void {
 		++generation;
 		statusCtx = undefined;
 		cache = undefined;
+		groups = new Set();
+		written = undefined;
+		failures = 0;
+		lastFullAt = 0;
 		process.stdout.off("resize", repaintOnResize);
 	});
 
 	pi.on("model_select", (_event, ctx) => {
-		void refreshStatus(ctx, true);
+		void refreshStatus(ctx, { force: true }).catch(() => {});
+	});
+
+	pi.on("agent_end", (_event, ctx) => {
+		// The run just went through the gateway, so magpie's latest route and its
+		// own quota reading have moved: show them now, without asking a vendor.
+		void refreshStatus(ctx).catch(() => {});
 	});
 
 	pi.registerCommand("magpie", {
 		description: "Magpie gateway — the models, quotas and routing groups it serves",
-		getArgumentCompletions: (prefix) => argumentCompletions(prefix, { models: () => magpie.models() }),
+		getArgumentCompletions: (prefix) =>
+			argumentCompletions(prefix, { models: () => magpie.models(), groups: () => groups }),
 		handler: async (args, ctx) => {
 			const [sub, ...rest] = args.trim().split(/\s+/).filter(Boolean);
 			const target = rest[0];
 			const now = Date.now();
-			const lines = await report(ctx, magpie, sub, target, now);
+			const lines = await report(ctx, magpie, sub, target, now, groups);
 			const unknown = sub !== undefined && !findSubcommand(sub);
 			ctx.ui.notify(lines.join("\n"), unknown ? "warning" : "info");
-			if (sub === "refresh") await refreshStatus(ctx, true);
+			if (sub === "refresh") {
+				// The catalog and the groups move together: a group added in
+				// magpie belongs in the footer as soon as the refresh says so.
+				void loadGroups(ctx)
+					.then(() => refreshStatus(ctx, { force: true, full: true }))
+					.catch(() => {});
+			}
 		},
 	});
 }
@@ -160,27 +277,83 @@ export default function (pi: ExtensionAPI): void {
 // The footer
 // =============================================================================
 
-async function statusRender(
-	ctx: ExtensionContext,
+async function statusReading(
 	magpie: MagpieProviderHandle,
 	model: Model<Api>,
-): Promise<StatusRender> {
-	const auth = await gatewayAuth(ctx);
-	if (model.id.startsWith(GROUP_PREFIX)) {
-		const id = model.id.slice(GROUP_PREFIX.length);
-		const route = await lastRouteFor(id);
-		const info = await groupDefinition(id);
-		const status = groupStatus(route, info);
-		return () => (status ? `${PROVIDER_LABEL} ${status}` : `${PROVIDER_LABEL} ${model.name}`);
+	auth: GatewayAuth,
+	full: boolean,
+	groups: ReadonlySet<string>,
+): Promise<StatusReading> {
+	const plain: StatusReading = { render: () => `${PROVIDER_LABEL} ${model.name}`, full: true };
+	// Quotas and routing are told to this machine alone: a gateway elsewhere
+	// answers with its catalog and takes the requests, but not with its accounts
+	// or its routing, and this machine's history is another gateway's.
+	if (!auth.local) return plain;
+	// Which model is a routing group is magpie's answer, not a prefix's: its own
+	// list of groups, and for one that list cannot name, the routing the gateway
+	// did — a request magpie split across members is a group whatever its id looks like.
+	const known = groups.has(shortGroupId(model.id));
+	if (!known && groups.size === 0) {
+		const proof = await groupProof(auth, model.id);
+		if (proof) return groupReading(auth, model, proof);
 	}
-	if (!auth.local) return () => `${PROVIDER_LABEL} ${model.name}`;
+	if (known) return groupReading(auth, model);
 	const provider = await quotaProviderFor(magpie, auth, model.id);
-	if (!provider) return () => `${PROVIDER_LABEL} ${model.name}`;
-	const entries = await fetchQuotas(auth.root, auth.token, AbortSignal.timeout(8_000));
+	if (!provider) return plain;
+	// A run's end reads what magpie already read; only a reading gone stale
+	// asks magpie to read the vendors, so a footer refresh costs them nothing.
+	const entries = await fetchQuotas(auth.root, auth.token, AbortSignal.timeout(8_000), { kept: !full });
 	const view = quotaView(entries, provider);
+	const readAt = readingAt(entries, provider);
 	const forms = view.status;
-	if (!forms) return () => `${PROVIDER_LABEL} ${provider} — no quota reported`;
-	return () => statusForWidth(forms, statusBudget(), PROVIDER_LABEL, STATUS_LABEL_CUT);
+	if (forms) {
+		return { render: () => statusForWidth(forms, statusBudget(), PROVIDER_LABEL, STATUS_LABEL_CUT), readAt, full };
+	}
+	// Nothing left for that provider — which is also what a routing group reports
+	// when it has no card of its own: ask the gateway whose members it routed.
+	const proof = await groupProof(auth, model.id);
+	if (proof) return groupReading(auth, model, proof);
+	// magpie says nothing of this provider at all (a group's id is nobody's
+	// provider): the model's name is all there is to show.
+	if (view.entries.length === 0) return plain;
+	return { render: () => `${PROVIDER_LABEL} ${provider} — no quota reported`, readAt, full };
+}
+
+/**
+ * Proof that a model is a routing group, from the gateway's own memory: a
+ * request through it that names the members it chose between. The live trace
+ * only — a routing history line names the model it asked for too, and that a
+ * request asked for a model is not proof it is a group. Undefined when the
+ * trace cannot answer, or when its latest route names no group.
+ */
+async function groupProof(auth: GatewayAuth, modelId: string): Promise<Route | undefined> {
+	const trace = await fetchTrace(auth.root, auth.token, AbortSignal.timeout(8_000));
+	if (!trace) return undefined;
+	const route = latestGroupRouteIn(trace, modelId);
+	return route?.group ? route : undefined;
+}
+
+/** The footer line of a routing group: its strategy and who answered last. */
+async function groupReading(auth: GatewayAuth, model: Model<Api>, known?: Route): Promise<StatusReading> {
+	const route = known ?? (await groupRoute(auth, model.id));
+	const status = groupStatus(route, undefined);
+	return {
+		render: () => (status ? `${PROVIDER_LABEL} ${status}` : `${PROVIDER_LABEL} ${model.name}`),
+		readAt: Date.now(),
+		full: true,
+	};
+}
+
+/**
+ * Whether a reading is old enough to be worth asking the vendors again. A full
+ * read never is; one that doesn't say when it was read is judged by the last
+ * full read, so the check cannot loop.
+ */
+function staleReading(reading: StatusReading, now: number, lastFullAt: number): boolean {
+	if (reading.full) return false;
+	return reading.readAt === undefined
+		? now - lastFullAt >= STALE_READING_MS
+		: now - reading.readAt >= STALE_READING_MS;
 }
 
 /** Columns this status may take: the terminal, less what sibling statuses may show. */
@@ -201,14 +374,15 @@ async function report(
 	sub: string | undefined,
 	target: string | undefined,
 	now: number,
+	groups: ReadonlySet<string>,
 ): Promise<string[]> {
 	switch (sub) {
 		case "quota":
-			return quotaReport(ctx, magpie, target, now);
+			return quotaReport(ctx, magpie, target, now, groups);
 		case "group":
-			return groupReport(ctx, target);
+			return groupReport(ctx, target, groups);
 		case "groups":
-			return groupsReport(ctx, magpie);
+			return groupsReport(ctx, magpie, groups);
 		case "refresh":
 			return refreshReport(ctx);
 		case "endpoint":
@@ -216,7 +390,7 @@ async function report(
 		case "help":
 			return helpReport();
 		case undefined:
-			return overviewReport(ctx, magpie, now);
+			return overviewReport(ctx, magpie, now, groups);
 		default:
 			return [`unknown: /magpie ${sub}`, "what it can report on:", ...usageLines()];
 	}
@@ -231,20 +405,21 @@ async function overviewReport(
 	ctx: ExtensionContext,
 	magpie: MagpieProviderHandle,
 	now: number,
+	groups: ReadonlySet<string>,
 ): Promise<string[]> {
 	const auth = await gatewayAuth(ctx);
 	const models = magpieModels(ctx);
-	const groups = models.filter((model) => model.id.startsWith(GROUP_PREFIX)).length;
+	const found = models.filter((model) => groups.has(shortGroupId(model.id))).length;
 	const lines = [
 		`${PROVIDER_LABEL} · ${gatewayUrlFor(auth.root)} · ${
 			auth.local ? "this machine" : "remote"
 		} · ${auth.stored ? "logged in" : "default gateway"}`,
-		`catalog: ${count(models.length, "model")}${groups > 0 ? ` · ${count(groups, "routing group")}` : ""}`,
+		`catalog: ${count(models.length, "model")}${found > 0 ? ` · ${count(found, "routing group")}` : ""}`,
 	];
 	const model = ctx.model;
 	if (model?.provider === PROVIDER_ID) {
 		lines.push(`current: ${model.name} (${model.id}) · ${model.api}`);
-		lines.push(...(await currentLines(ctx, magpie, auth, now)).map((line) => `  ${line}`));
+		lines.push(...(await currentLines(ctx, magpie, auth, now, groups)).map((line) => `  ${line}`));
 	} else {
 		lines.push(
 			`current: ${model ? `${model.provider}/${model.id}` : "no model"} — not a magpie one${models.length > 0 ? " (/model lists them)" : ""}`,
@@ -260,12 +435,11 @@ async function currentLines(
 	magpie: MagpieProviderHandle,
 	auth: GatewayAuth,
 	now: number,
+	groups: ReadonlySet<string>,
 ): Promise<string[]> {
 	const model = ctx.model;
 	if (!model || model.provider !== PROVIDER_ID) return [];
-	if (model.id.startsWith(GROUP_PREFIX)) {
-		return groupReport(ctx, model.id.slice(GROUP_PREFIX.length));
-	}
+	if (groups.has(shortGroupId(model.id))) return groupReport(ctx, model.id, groups);
 	return (await quotaLines(magpie, auth, model.id, now, auth.token)).map((line) => `quota: ${line}`);
 }
 
@@ -282,6 +456,7 @@ async function quotaReport(
 	magpie: MagpieProviderHandle,
 	target: string | undefined,
 	now: number,
+	groups: ReadonlySet<string>,
 ): Promise<string[]> {
 	const auth = await gatewayAuth(ctx);
 	const model = target
@@ -292,10 +467,10 @@ async function quotaReport(
 	if (!model) {
 		return [`no magpie model to report on${target ? `: ${target}` : " — name one: /magpie quota <model>"}`];
 	}
-	if (model.id.startsWith(GROUP_PREFIX)) {
+	if (groups.has(shortGroupId(model.id))) {
 		return [
 			`${model.id} is a routing group — a group has no quota of its own`,
-			...(await groupReport(ctx, model.id.slice(GROUP_PREFIX.length))),
+			...(await groupReport(ctx, model.id, groups)),
 		];
 	}
 	return quotaLines(magpie, auth, model.id, now, auth.token);
@@ -324,13 +499,16 @@ async function quotaLines(
 	return [`${provider} —`, ...view.report];
 }
 
-async function groupReport(ctx: ExtensionContext, id: string | undefined): Promise<string[]> {
-	const groupId = id?.replace(/^group\//, "") ?? currentGroupId(ctx);
+async function groupReport(ctx: ExtensionContext, id: string | undefined, groups: ReadonlySet<string>): Promise<string[]> {
+	// magpie's CLI takes a group by any of its ids: `step-5-preview`,
+	// `group/step-5-preview`, `auto/deepseek-v4.1-flash` or `auto-deepseek-v4-1-flash`.
+	const groupId = id?.trim() || currentGroupId(ctx, groups);
 	if (!groupId) return ["the current model is not a routing group — name one: /magpie group <id>"];
 	const lines: string[] = [];
 	const info = await groupDefinition(groupId);
 	if (info) {
-		lines.push(`group/${groupId}${info.name ? ` · ${info.name}` : ""}${info.auto ? " · found by magpie" : ""}`);
+		const named = info.id ?? groupId;
+		lines.push(`${named}${info.name ? ` · ${info.name}` : ""}${info.auto ? " · found by magpie" : ""}`);
 		const fields = [info.routing ? `routing ${info.routing}` : "", info.stays ? `stays ${info.stays}` : ""].filter(
 			Boolean,
 		);
@@ -348,7 +526,7 @@ async function groupReport(ctx: ExtensionContext, id: string | undefined): Promi
 		if (info.classifier) lines.push(`  classifier: ${info.classifier}`);
 		lines.push(...info.rules.map((rule, index) => `  rule ${index + 1}: ${rule}`));
 	} else {
-		lines.push(`group/${groupId} — magpie did not describe it (is the magpie CLI on PATH?)`);
+		lines.push(`${groupId} — magpie did not describe it (is the magpie CLI on PATH?)`);
 	}
 	const route = await lastRouteFor(groupId);
 	if (route) lines.push(...describeRoute(route));
@@ -356,17 +534,20 @@ async function groupReport(ctx: ExtensionContext, id: string | undefined): Promi
 	return lines;
 }
 
-async function groupsReport(ctx: ExtensionContext, magpie: MagpieProviderHandle): Promise<string[]> {
+async function groupsReport(
+	ctx: ExtensionContext,
+	magpie: MagpieProviderHandle,
+	groups: ReadonlySet<string>,
+): Promise<string[]> {
 	const rows = new Map<string, GroupListRow>();
 	const cli = await runMagpie(["groups"]);
 	if (cli.ok) {
 		for (const row of parseGroupsList(cli.stdout)) rows.set(row.id, row);
 	}
-	const here = currentGroupId(ctx);
-	const current = here ? `group/${here}` : undefined;
+	const current = currentGroupId(ctx, groups);
 	const routes = await groupRoutes();
 	const catalog = magpie.models();
-	const served = catalog.filter((model) => model.id.startsWith(GROUP_PREFIX));
+	const served = catalog.filter((model) => groups.has(shortGroupId(model.id)));
 	const ids = new Set<string>([...served.map((model) => model.id), ...rows.keys()]);
 	if (ids.size === 0) {
 		return ["no routing groups: magpie serves none and the magpie CLI listed none"];
@@ -381,7 +562,7 @@ async function groupsReport(ctx: ExtensionContext, magpie: MagpieProviderHandle)
 		const routing = route?.group?.routing || row?.routing || "?";
 		const members = route?.group?.members ?? row?.members ?? [];
 		const against = route?.order?.length ? ` · ${route.order.length} weighed` : "";
-		const here = id === current ? "  ← current" : "";
+		const here = current !== undefined && shortGroupId(id) === current ? "  ← current" : "";
 		const lines2 = [
 			`  ${id}${name ? ` ${name}` : ""} · ${routing}${members.length > 0 ? ` · ${members.join(" → ")}` : ""}${against}${here}`,
 		];
@@ -452,10 +633,11 @@ async function quotaProviderFor(
 	return ownedByEntry(entry);
 }
 
-function currentGroupId(ctx: ExtensionContext): string | undefined {
+/** The current model's group id, when the model is one of magpie's routing groups. */
+function currentGroupId(ctx: ExtensionContext, groups: ReadonlySet<string>): string | undefined {
 	const model = ctx.model;
-	return model?.provider === PROVIDER_ID && model.id.startsWith(GROUP_PREFIX)
-		? model.id.slice(GROUP_PREFIX.length)
+	return model?.provider === PROVIDER_ID && groups.has(shortGroupId(model.id))
+		? shortGroupId(model.id)
 		: undefined;
 }
 
@@ -464,10 +646,37 @@ function magpieModels(ctx: ExtensionContext): Model<Api>[] {
 	return ctx.modelRegistry.getAll().filter((model) => model.provider === PROVIDER_ID);
 }
 
+/**
+ * The routing groups magpie serves, by id. `magpie groups` is the one place
+ * magpie says which models are groups — `group/<id>`, or a found group's
+ * `auto/<model>` — so nothing here guesses from a prefix. A magpie without its
+ * CLI on PATH answers nothing, and the footer then learns a group from the
+ * routing trace, once that group has taken a request.
+ */
+async function knownGroupIds(auth: GatewayAuth): Promise<Set<string>> {
+	const ids = new Set<string>();
+	// Another machine's groups are another machine's: its CLI is not this one's.
+	if (!auth.local) return ids;
+	const run = await runMagpie(["groups"]);
+	if (!run.ok) return ids;
+	for (const row of parseGroupsList(run.stdout)) ids.add(shortGroupId(row.id));
+	return ids;
+}
+
 /** A group as the magpie CLI describes it; undefined when it cannot. */
 async function groupDefinition(id: string): Promise<GroupInfo | undefined> {
 	const run = await runMagpie(["group", id]);
 	return run.ok ? parseGroupShow(run.stdout) : undefined;
+}
+
+/** A group's last request: the gateway's live trace, else its routing history. */
+async function groupRoute(auth: GatewayAuth, id: string): Promise<Route | undefined> {
+	const trace = await fetchTrace(auth.root, auth.token, AbortSignal.timeout(8_000));
+	if (trace) {
+		const route = latestGroupRouteIn(trace, id);
+		if (route) return route;
+	}
+	return lastRouteFor(id);
 }
 
 /** The last request through a group, from magpie's routing history. */

@@ -29,8 +29,17 @@ export const STATUS_KEY = "magpie";
 export const DEFAULT_CONTEXT_WINDOW = 128_000;
 export const DEFAULT_MAX_TOKENS = 16_384;
 
-/** How long a quota or routing reading is reused before asking magpie again. */
-export const STATUS_TTL_MS = 45_000;
+/**
+ * How long a footer reading stands when two triggers arrive together (a model
+ * switch and a run's end, say). The footer is otherwise re-read on demand:
+ * `?kept=1` asks no vendor, so there is no reason to hold a reading longer.
+ */
+export const STATUS_TTL_MS = 3_000;
 
-/** Prefix of a routing group's model id in magpie's catalog. */
-export const GROUP_PREFIX = "group/";
+/**
+ * How old magpie's own quota reading may get before the footer has magpie read
+ * the vendors again. The footer otherwise reads what magpie already read
+ * (`?kept=1`), which asks no vendor at all; only a reading this old is worth a
+ * full read, and no more than one in this long.
+ */
+export const STALE_READING_MS = 900_000;

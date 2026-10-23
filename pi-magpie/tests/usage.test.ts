@@ -14,9 +14,15 @@ const source = {
 	models: () => [
 		{ id: "opencode-go/mimo-v2.6-flash", name: "MiMo-V2.6-Flash" },
 		{ id: "codex/gpt-5.5", name: "GPT-5.5" },
-		{ id: "group/auto-mimo-v2-6-flash", name: "MiMo-V2.6-Flash" },
-		{ id: "group/auto-deepseek-v4-1-flash", name: "DeepSeek V4.1 Flash" },
+		{ id: "auto/mimo-v2.6-flash", name: "MiMo-V2.6-Flash" },
+		{ id: "group/step-5-preview", name: "step-5-preview" },
 	],
+	// `magpie groups` names them: a found group's auto/<model>, a made one's group/<id>.
+	groups: () =>
+		new Set([
+			"auto/mimo-v2.6-flash",
+			"step-5-preview",
+		]),
 };
 
 const labels = (prefix: string): string[] =>
@@ -97,12 +103,8 @@ describe("argumentCompletions", () => {
 	});
 
 	it("ranks a contiguous match above a scattered one", () => {
-		// "gpt" is consecutive in codex/gpt-5.5, and only a subsequence of the groups.
-		assert.deepEqual(labels("quota gpt"), [
-			"codex/gpt-5.5",
-			"group/auto-mimo-v2-6-flash",
-			"group/auto-deepseek-v4-1-flash",
-		]);
+		// "gpt" is consecutive in codex/gpt-5.5, and only a subsequence of the group.
+		assert.deepEqual(labels("quota gpt"), ["codex/gpt-5.5", "group/step-5-preview"]);
 	});
 
 	it("offers the models a quota can name", () => {
@@ -115,19 +117,19 @@ describe("argumentCompletions", () => {
 		});
 		assert.deepEqual(labels("quota mimo"), [
 			"opencode-go/mimo-v2.6-flash",
-			"group/auto-mimo-v2-6-flash",
+			"auto/mimo-v2.6-flash",
 		]);
 	});
 
-	it("offers only the groups a group report can name, without the prefix", () => {
+	it("offers the groups magpie lists, by the id the CLI takes, without a prefix", () => {
 		const items = argumentCompletions("group ", source)!;
 		assert.deepEqual(items.map((item) => item.value), [
-			"group auto-mimo-v2-6-flash",
-			"group auto-deepseek-v4-1-flash",
+			"group auto/mimo-v2.6-flash",
+			"group step-5-preview",
 		]);
 		assert.deepEqual(items.map((item) => item.label), [
-			"group/auto-mimo-v2-6-flash",
-			"group/auto-deepseek-v4-1-flash",
+			"auto/mimo-v2.6-flash",
+			"step-5-preview",
 		]);
 	});
 
@@ -141,6 +143,6 @@ describe("argumentCompletions", () => {
 
 	it("tolerates leading space, as the editor sends it", () => {
 		assert.deepEqual(labels("  gr"), ["group [id]", "groups"]);
-		assert.deepEqual(labels("  quota deepseek"), ["group/auto-deepseek-v4-1-flash"]);
+		assert.deepEqual(labels("  quota step"), ["group/step-5-preview"]);
 	});
 });

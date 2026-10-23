@@ -13,6 +13,7 @@ import type { Credential } from "@earendil-works/pi-ai/compat";
 import type { MagpieModelEntry } from "./catalog.ts";
 import { DEFAULT_ROOT, PROVIDER_ID, ROOT_ENV } from "./constants.ts";
 import type { QuotaEntry } from "./quota.ts";
+import type { TraceRoute } from "./routing.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -70,7 +71,17 @@ export function isLoopback(root: string): boolean {
 
 export const modelsUrl = (root: string): string => `${root}/v1/models`;
 export const modelUrl = (root: string, id: string): string => `${root}/v1/models/${id}`;
-export const quotasUrl = (root: string): string => `${root}/v1/magpie/quotas`;
+
+/**
+ * The allowances as magpie reports them. `kept` asks for what magpie last
+ * read, asking no vendor: the footer's own reading, since a plain read makes
+ * magpie read the vendors again whenever its minute of cache is up.
+ */
+export const quotasUrl = (root: string, kept = false): string =>
+	`${root}/v1/magpie/quotas${kept ? "?kept=1" : ""}`;
+
+/** magpie's live routing trace: this machine only, and never a held key. */
+export const traceUrl = (root: string): string => `${root}/v1/magpie/trace`;
 
 /** GET a magpie endpoint as JSON, with a bounded wait that the caller can cancel. */
 export async function fetchJson(
@@ -132,11 +143,36 @@ export async function fetchQuotas(
 	root: string,
 	token: string,
 	signal: AbortSignal,
+	options: { kept?: boolean } = {},
 ): Promise<QuotaEntry[]> {
-	const body = await fetchJson(quotasUrl(root), token, signal);
+	const url = quotasUrl(root, options.kept);
+	const body = await fetchJson(url, token, signal);
 	const data = (body as { data?: unknown })?.data;
-	if (!Array.isArray(data)) throw new Error(`${quotasUrl(root)} did not answer a quota list`);
+	if (!Array.isArray(data)) throw new Error(`${url} did not answer a quota list`);
 	return data as QuotaEntry[];
+}
+
+/**
+ * The gateway's live routing trace. Undefined when it cannot tell it — a
+ * gateway on another machine is refused (the trace is this machine's), and so
+ * is a magpie too old to have one; the caller then reads the routing history
+ * on disk instead.
+ */
+export async function fetchTrace(
+	root: string,
+	token: string,
+	signal: AbortSignal,
+): Promise<TraceRoute[] | undefined> {
+	const url = traceUrl(root);
+	let body: unknown;
+	try {
+		body = await fetchJson(url, token, signal);
+	} catch {
+		return undefined;
+	}
+	const data = (body as { routes?: unknown })?.routes;
+	if (!Array.isArray(data)) return undefined;
+	return data as TraceRoute[];
 }
 
 // =============================================================================

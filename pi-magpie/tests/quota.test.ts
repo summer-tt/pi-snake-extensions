@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
 	formatReset,
 	quotaView,
+	readingAt,
 	remainingPercent,
 	selectQuotas,
 	statusForms,
@@ -122,4 +123,21 @@ test("quotaView: report lines, and an error is reported as one", () => {
 	const silent = quotaView([{ provider: "codex", name: "Codex" }], "codex", NOW);
 	assert.deepEqual(silent.report, ["Codex", "  no allowance reported"]);
 	assert.deepEqual(quotaView([], "codex", NOW).report, []);
+});
+
+test("readingAt: the oldest card's time decides, and none means the reading doesn't say", () => {
+	const kept: QuotaEntry[] = [
+		{ provider: "codex", readAt: "2026-10-23T16:00:00Z" },
+		{ provider: "codex", readAt: "2026-10-23T15:00:00Z" },
+		{ provider: "workbuddy", readAt: "2026-10-23T10:00:00Z" },
+	];
+	assert.equal(readingAt(kept, "codex"), Date.parse("2026-10-23T15:00:00Z"));
+	// A plan's card need not carry a time: one that does still counts.
+	const mixed: QuotaEntry[] = [
+		{ provider: "opencode-go", windows: [{ name: "5 hours", remaining: 90 }] },
+		{ provider: "opencode-go", asOf: "2026-10-23T14:00:00Z" },
+	];
+	assert.equal(readingAt(mixed, "opencode-go"), Date.parse("2026-10-23T14:00:00Z"));
+	assert.equal(readingAt(mixed, "nobody"), undefined);
+	assert.equal(readingAt([{ provider: "opencode-go" }], "opencode-go"), undefined);
 });
