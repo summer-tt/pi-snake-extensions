@@ -594,7 +594,7 @@ async function endpointReport(ctx: ExtensionContext): Promise<string[]> {
 	lines.push(`auth: ${status.configured ? (status.label ?? status.source ?? "configured") : "not configured"}`);
 	if ((await magpieProviderBlockInModelsJson(getAgentDir())).staticConfig) {
 		lines.push(
-			`note: ${modelsJsonPath(getAgentDir())} also names providers.${PROVIDER_ID} with static config — its block overrides the connection and the model list this extension serves. Set Pi's model to default in magpie, or keep only modelOverrides there.`,
+			`note: ${modelsJsonPath(getAgentDir())} also names providers.${PROVIDER_ID} with static config — its static fields can override connection settings or individual model definitions. Set Pi's model to default in magpie, or keep only modelOverrides there.`,
 		);
 	}
 	return lines;
@@ -702,8 +702,8 @@ async function groupRoutes(): Promise<Map<string, Route>> {
 /**
  * magpie writes `providers.magpie` into pi's models.json whenever one of its
  * models is picked for Pi there. That block changes what this extension's
- * models get: one baseUrl for every model of the provider, and a frozen model
- * list pi prefers over the live catalog. Per-model `modelOverrides` — kept
+ * models get: one baseUrl for every model of the provider, plus static
+ * definitions that add or replace models by ID in the live catalog. Per-model `modelOverrides` — kept
  * next to the extension for windows, prices and cache TTLs, with a display
  * `name` — change no model's connection and are not a conflict. Say so once,
  * at startup, only when static config is really there.
@@ -714,7 +714,7 @@ async function warnIfModelsJsonHandlesMagpie(ctx: ExtensionContext): Promise<voi
 	if (!(await magpieProviderBlockInModelsJson(getAgentDir())).staticConfig) return;
 	const warning = [
 		`magpie: ${modelsJsonPath(getAgentDir())} still names providers.${PROVIDER_ID} with static config.`,
-		"That takes the connection and the model list from models.json rather than the gateway: a baseUrl stands in for every model's own (an Anthropic model would be asked at /v1/v1/messages), and a frozen models list is preferred over this extension's live catalog.",
+		"Static fields can override connection settings or individual model definitions: baseUrl replaces every model's address, while models adds or replaces entries by ID. Other models from the gateway remain available.",
 		"Keep only modelOverrides there — they change models, not connections — or set Pi's model to default in magpie.",
 	].join("\n");
 	// The same shape pi uses for its own diagnostics: a warning without a TUI.

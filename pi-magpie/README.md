@@ -133,11 +133,13 @@ its last 60 requests, so a footer refresh reads no file at all.
 
 magpie writes a `providers.magpie` block into `~/.pi/agent/models.json`
 whenever one of its models is picked for pi in magpie's own UI. That block
-sets **one** `baseUrl` for every model of the provider — which would point an
-Anthropic model at `/v1/v1/messages` — and pi prefers its frozen `models`
-list over this extension's live catalog. Requests still work (the endpoint is
-stamped per request), but the model list and native paths don't. Set pi's
-model to `default` in magpie (which removes the block), or delete it by hand.
+sets **one** `baseUrl` for every model of the provider and supplies static
+`models` definitions. Pi adds or replaces those models by ID; other models
+from the live gateway catalog remain available. Provider-level connection
+settings can also override the endpoint, headers or authentication. The
+extension stamps native endpoints per request, but static metadata can still
+replace gateway metadata. Set pi's model to `default` in magpie (which removes
+the block), or keep only the intended per-model `modelOverrides` by hand.
 The extension reports the conflict once at startup.
 
 A block that holds only `modelOverrides` (per-model windows, prices, cache

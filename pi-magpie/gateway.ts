@@ -302,7 +302,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * (`applyModelsJson` / `composeModelProvider`): `baseUrl` replaces every
  * model's base URL (the `??` there applies an empty string too), provider-wide
  * `headers`, `apiKey` and `authHeader` reach every request, and a non-empty
- * `models` list is a frozen catalog pi prefers over a live one. `name`, `api`
+ * `models` list adds or replaces definitions by ID in the live catalog. `name`, `api`
  * (it only feeds static model definitions), `compat` and `modelOverrides`
  * change no model's connection and are not a conflict.
  */
@@ -316,8 +316,8 @@ function staticProviderConfig(block: Record<string, unknown>): boolean {
 
 /**
  * What pi's models.json says about this provider: whether it names `magpie`,
- * and whether that block overrides the connection or the model list this
- * extension serves. A block of per-model `modelOverrides` (with a `name`)
+ * and whether that block supplies connection settings or static model
+ * definitions over this extension. A block of per-model `modelOverrides` (with a `name`)
  * tunes models and is not a conflict.
  */
 export async function magpieProviderBlockInModelsJson(

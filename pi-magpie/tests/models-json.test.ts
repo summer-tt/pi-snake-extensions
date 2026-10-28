@@ -1,7 +1,7 @@
 /**
  * The models.json hints must tell a conflict from a tune-up: pi composes a
  * `providers.magpie` block over this extension's live catalog, but only its
- * static fields take the connection or the model list over (`baseUrl`,
+ * static fields override connection settings or individual models (`baseUrl`,
  * provider-wide `headers`/`apiKey`/`authHeader`, a non-empty `models` list).
  * Per-model `modelOverrides` — what a magpie user keeps next to the extension
  * for windows, prices and cache TTLs, with a display `name` — change the
@@ -116,7 +116,7 @@ test("a baseUrl is a conflict — pi applies it to every model, an empty string 
 	);
 });
 
-test("a frozen models list is a conflict", async () => {
+test("static model definitions are a conflict", async () => {
 	const read = await analysis(
 		JSON.stringify({
 			providers: {
@@ -280,7 +280,8 @@ test("startup warns once for a static block, and /magpie endpoint notes it", asy
 			const warnings = ext.notifications.filter((note) => note.type === "warning");
 			assert.equal(warnings.length, 1, "the startup warning, once");
 			assert.match(warnings[0]?.text ?? "", /providers\.magpie with static config/);
-			assert.match(warnings[0]?.text ?? "", /v1\/v1\/messages/);
+			assert.match(warnings[0]?.text ?? "", /models adds or replaces entries by ID/);
+			assert.match(warnings[0]?.text ?? "", /Other models from the gateway remain available/);
 			await ext.runCommand("endpoint");
 			const note = ext.notifications.filter((note) => note.text.includes("note:")).at(-1);
 			assert.match(note?.text ?? "", /static config/);
