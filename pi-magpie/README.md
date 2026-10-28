@@ -140,6 +140,11 @@ stamped per request), but the model list and native paths don't. Set pi's
 model to `default` in magpie (which removes the block), or delete it by hand.
 The extension reports the conflict once at startup.
 
+A block that holds only `modelOverrides` (per-model windows, prices, cache
+TTLs — even next to a display `name`) changes models without touching how any
+of them is reached, and is not a conflict: the startup warning and the
+`/magpie endpoint` note stay silent for it.
+
 ## Notes & limits
 
 - Every model reports cost `0`: magpie's catalog carries no prices. The
@@ -158,6 +163,13 @@ The extension reports the conflict once at startup.
 
 ```bash
 pi install npm:pi-magpie
+```
+
+Or straight from this repository, at a pinned commit — the repo root is a pi
+package whose manifest exposes only this extension:
+
+```bash
+pi install git:github.com/summer-tt/pi-snake-extensions@<commit-sha>
 ```
 
 From a local checkout (development): `pi install ./pi-magpie`.

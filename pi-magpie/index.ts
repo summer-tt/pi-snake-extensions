@@ -37,7 +37,7 @@ import {
 	fetchTrace,
 	gatewayUrlFor,
 	isLoopback,
-	magpieProviderInModelsJson,
+	magpieProviderBlockInModelsJson,
 	modelsJsonPath,
 	normalizeRoot,
 	readRoutingTail,
@@ -592,9 +592,9 @@ async function endpointReport(ctx: ExtensionContext): Promise<string[]> {
 	];
 	const status = ctx.modelRegistry.getProviderAuthStatus(PROVIDER_ID);
 	lines.push(`auth: ${status.configured ? (status.label ?? status.source ?? "configured") : "not configured"}`);
-	if (await magpieProviderInModelsJson(getAgentDir())) {
+	if ((await magpieProviderBlockInModelsJson(getAgentDir())).staticConfig) {
 		lines.push(
-			`note: ${modelsJsonPath(getAgentDir())} also names providers.${PROVIDER_ID} — magpie's static block overrides every model's base URL. Set Pi's model to default in magpie, or drop that block.`,
+			`note: ${modelsJsonPath(getAgentDir())} also names providers.${PROVIDER_ID} with static config — its block overrides the connection and the model list this extension serves. Set Pi's model to default in magpie, or keep only modelOverrides there.`,
 		);
 	}
 	return lines;
@@ -702,18 +702,20 @@ async function groupRoutes(): Promise<Map<string, Route>> {
 /**
  * magpie writes `providers.magpie` into pi's models.json whenever one of its
  * models is picked for Pi there. That block changes what this extension's
- * models get: one baseUrl for every model of the provider. Say so once, at
- * startup.
+ * models get: one baseUrl for every model of the provider, and a frozen model
+ * list pi prefers over the live catalog. Per-model `modelOverrides` — kept
+ * next to the extension for windows, prices and cache TTLs, with a display
+ * `name` — change no model's connection and are not a conflict. Say so once,
+ * at startup, only when static config is really there.
  */
 async function warnIfModelsJsonHandlesMagpie(ctx: ExtensionContext): Promise<void> {
 	const status = ctx.modelRegistry.getProviderAuthStatus(PROVIDER_ID);
 	if (!status.configured) return;
-	if (!(await magpieProviderInModelsJson(getAgentDir()))) return;
+	if (!(await magpieProviderBlockInModelsJson(getAgentDir())).staticConfig) return;
 	const warning = [
-		`magpie: ${modelsJsonPath(getAgentDir())} still names providers.${PROVIDER_ID}.`,
-		"magpie's static block there overrides every model's base URL (an Anthropic model would be asked at /v1/v1/messages).",
-		"Next to it, pi prefers magpie's frozen model list over this extension's live catalog.",
-		"Set Pi's model to default in magpie (or delete that block) to let the live catalog through.",
+		`magpie: ${modelsJsonPath(getAgentDir())} still names providers.${PROVIDER_ID} with static config.`,
+		"That takes the connection and the model list from models.json rather than the gateway: a baseUrl stands in for every model's own (an Anthropic model would be asked at /v1/v1/messages), and a frozen models list is preferred over this extension's live catalog.",
+		"Keep only modelOverrides there — they change models, not connections — or set Pi's model to default in magpie.",
 	].join("\n");
 	// The same shape pi uses for its own diagnostics: a warning without a TUI.
 	if (ctx.hasUI) ctx.ui.notify(warning, "warning");

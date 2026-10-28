@@ -35,6 +35,8 @@ working. Two tools: `job` and `job_watch`.
 
 ## Install
 
+Each extension installs on its own:
+
 ```bash
 pi install ./pi-mcp
 ```
@@ -45,6 +47,18 @@ Or from npm (once published):
 pi install npm:@tinysnake/pi-mcp
 pi install npm:pi-think-twice
 ```
+
+The repository root is itself a pi package whose manifest exposes only
+`pi-magpie`, so a git install at a pinned commit loads that one extension and
+nothing else from this monorepo:
+
+```bash
+pi install git:github.com/summer-tt/pi-snake-extensions@<commit-sha>
+```
+
+The root manifest declares the pi SDK packages as peer dependencies (`"*"`),
+so a pi-managed git install never vendors a second copy of them — pi's loader
+maps the imports to the running agent's own SDK.
 
 ## Requirements
 

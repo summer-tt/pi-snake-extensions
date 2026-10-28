@@ -272,14 +272,65 @@ export async function readRoutingTail(path: string, bytes = 256 * 1024): Promise
 	}
 }
 
-/** Whether pi's models.json names this extension's provider too. */
-export async function magpieProviderInModelsJson(agentDir: string): Promise<boolean> {
+/**
+ * Whether pi's models.json names this extension's provider, and whether that
+ * block takes the connection or the catalog over from it. Read for the
+ * startup warning and `/magpie endpoint` — the two hints must not fire for a
+ * block that only tunes models.
+ */
+export interface MagpieProviderBlockInModelsJson {
+	/** Whether models.json carries a `providers.magpie` block at all. */
+	present: boolean;
+	/**
+	 * Whether that block carries static connection or catalog config — a
+	 * provider-wide `baseUrl`, `headers`, `apiKey` or `authHeader`, or a
+	 * non-empty `models` list — rather than per-model `modelOverrides` (with a
+	 * display `name`) alone, which change the models they name without
+	 * touching how any model is reached.
+	 */
+	staticConfig: boolean;
+}
+
+/** A JSON object, as every record this file reads is. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Whether a models.json provider block holds config pi composes over every
+ * model of the provider it names. pi's own composition is the authority
+ * (`applyModelsJson` / `composeModelProvider`): `baseUrl` replaces every
+ * model's base URL (the `??` there applies an empty string too), provider-wide
+ * `headers`, `apiKey` and `authHeader` reach every request, and a non-empty
+ * `models` list is a frozen catalog pi prefers over a live one. `name`, `api`
+ * (it only feeds static model definitions), `compat` and `modelOverrides`
+ * change no model's connection and are not a conflict.
+ */
+function staticProviderConfig(block: Record<string, unknown>): boolean {
+	if (Array.isArray(block.models) && block.models.length > 0) return true;
+	if (typeof block.baseUrl === "string") return true;
+	if (isRecord(block.headers) && Object.keys(block.headers).length > 0) return true;
+	if (block.apiKey !== undefined) return true;
+	return block.authHeader === true;
+}
+
+/**
+ * What pi's models.json says about this provider: whether it names `magpie`,
+ * and whether that block overrides the connection or the model list this
+ * extension serves. A block of per-model `modelOverrides` (with a `name`)
+ * tunes models and is not a conflict.
+ */
+export async function magpieProviderBlockInModelsJson(
+	agentDir: string,
+): Promise<MagpieProviderBlockInModelsJson> {
 	try {
 		const raw = await readFile(join(agentDir, "models.json"), "utf8");
 		const parsed = JSON.parse(raw) as { providers?: Record<string, unknown> };
-		return Boolean(parsed?.providers && PROVIDER_ID in parsed.providers);
+		const block = parsed?.providers?.[PROVIDER_ID];
+		if (!isRecord(block)) return { present: false, staticConfig: false };
+		return { present: true, staticConfig: staticProviderConfig(block) };
 	} catch {
-		return false;
+		return { present: false, staticConfig: false };
 	}
 }
 

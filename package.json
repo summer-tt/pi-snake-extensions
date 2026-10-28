@@ -1,0 +1,19 @@
+{
+	"name": "pi-snake-extensions",
+	"version": "0.0.0",
+	"private": true,
+	"description": "A monorepo of pi coding agent extensions; as a pi package, its manifest exposes only pi-magpie.",
+	"license": "MIT",
+	"engines": {
+		"node": ">=22.6"
+	},
+	"pi": {
+		"extensions": [
+			"./pi-magpie/index.ts"
+		]
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "*",
+		"@earendil-works/pi-ai": "*"
+	}
+}
